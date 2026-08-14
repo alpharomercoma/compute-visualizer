@@ -222,16 +222,8 @@ export default function App() {
 
         {/* Bottom-aligned and narrow, so the board stays visible around it.
             Panels scattered over the scene rather than a wall of chrome. */}
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'flex-end',
-            justifyContent: 'center',
-            pointerEvents: 'none',
-            minHeight: 0,
-          }}
-        >
-          <div style={{ width: 290, maxHeight: '100%', display: 'flex' }}>
+        <div className="centre-column">
+          <div>
             {inferenceConfig && (
               <Advanced
                 state={state}

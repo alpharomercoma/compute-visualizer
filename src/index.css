@@ -438,23 +438,69 @@ button:focus-visible {
   letter-spacing: 0.02em;
 }
 
+/* The centre column floats its panel at the bottom, over the board. */
+.centre-column {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  pointer-events: none;
+  min-height: 0;
+}
+
+.centre-column > div {
+  width: 290px;
+  max-height: 100%;
+  display: flex;
+}
+
+/*
+ * Narrow: the overlay stops being an overlay.
+ *
+ * Floating panels over a scene only work when there is room beside the scene.
+ * Below this width they become an ordinary scrolling column, the scene drops to
+ * a band behind the masthead, and nothing is clipped — a panel cut off mid-word
+ * reads as a broken page, not as a scrollable one.
+ */
 @media (max-width: 1180px) {
+  html,
+  body {
+    height: auto;
+    overflow: auto;
+  }
+
+  .stage {
+    position: fixed;
+    inset: 0 0 auto 0;
+    height: 40vh;
+    opacity: 0.5;
+  }
+
   .overlay {
+    position: relative;
+    inset: auto;
     grid-template-columns: 1fr;
-    grid-template-rows: auto auto auto auto;
-    overflow-y: auto;
+    grid-template-rows: none;
+    grid-auto-rows: min-content;
     pointer-events: auto;
+    padding-top: 26vh;
+  }
+
+  /* Full height, no scroll container, no fade: the page scrolls instead. */
+  .panel {
+    overflow: visible;
+    max-height: none;
+    mask-image: none;
   }
 
   .foot {
     flex-direction: column;
   }
 
-  body {
-    overflow: auto;
-  }
-
-  .panel {
+  /* The centre column's bottom-alignment is meaningless in a single column. */
+  .centre-column,
+  .centre-column > div {
+    display: block;
+    width: auto;
     max-height: none;
   }
 }
