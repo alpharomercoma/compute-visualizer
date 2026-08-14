@@ -251,18 +251,27 @@ function tracePath(
  */
 function classify(
   breakdown: Readonly<Record<LimitedBy, Seconds>>,
-  stallTime: Seconds,
+  _stallTime: Seconds,
   makespan: Seconds,
 ): BottleneckClass {
-  // A schedule spending most of its time waiting is bound by its own structure,
-  // whatever the individual tasks were limited by.
-  if (makespan > 0 && stallTime / makespan > 0.4) return 'serialization'
-
   const ranked = (Object.entries(breakdown) as Array<[LimitedBy, Seconds]>).sort(
     (a, b) => b[1] - a[1],
   )
   const top = ranked[0]
   if (!top || top[1] === 0) return 'serialization'
+
+  /**
+   * Dependency-bound means nothing is saturated because everything is waiting
+   * its turn — so no single resource holds a majority of the critical path.
+   *
+   * An earlier version tried to detect this from idle time, which an
+   * earliest-start scheduler cannot produce: the traced path tiles the makespan
+   * by construction, so that test was always false and the class unreachable.
+   * A review caught it. This test is about the SHAPE of the critical path
+   * instead, which is what the class actually describes.
+   */
+  const dominantShare = makespan > 0 ? top[1] / makespan : 0
+  if (dominantShare < 0.5) return 'serialization'
 
   switch (top[0]) {
     case 'compute':

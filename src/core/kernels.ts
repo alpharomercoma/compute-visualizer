@@ -74,6 +74,19 @@ export interface Workload {
 export function attentionPairs(queryLength: number, contextLength: number, causal: boolean): number {
   const q = queryLength
   const s = contextLength
+
+  // Without this, q > s silently yields a NEGATIVE pair count — q=4, s=1 gives
+  // -2 — which then reaches flops() as an impossible quantity. New queries are
+  // part of the context they attend to, so q > s describes nothing.
+  if (!Number.isFinite(q) || !Number.isFinite(s) || q < 0 || s < 0) {
+    throw new RangeError(`attention lengths must be non-negative, got q=${q}, s=${s}`)
+  }
+  if (q > s) {
+    throw new RangeError(
+      `queryLength cannot exceed contextLength: the new queries are part of the context they attend to (q=${q}, s=${s})`,
+    )
+  }
+
   if (!causal) return q * s
   const prefix = s - q
   return q * prefix + (q * (q + 1)) / 2

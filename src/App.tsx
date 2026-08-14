@@ -10,13 +10,14 @@ import {
 } from './core/hardware'
 import { H100_EFFICIENCY, H100_OVERHEAD, IDEAL_EFFICIENCY } from './core/efficiency'
 import { fromHuggingFaceConfig } from './core/modelspec'
-import { analyseInference, computeBoundBatch } from './core/inference'
+import { type InferenceConfig, analyseInference, computeBoundBatch } from './core/inference'
 import { analyseTraining } from './core/training'
 import type { BottleneckClass } from './core/schedule'
 import { decodeAsymptotes, operatingPoint, roofline } from './core/roofline'
 import { explainVerdict } from './core/capacity'
 import { Roofline } from './viz/Roofline'
 import { TimeBreakdown } from './viz/TimeBreakdown'
+import { Advanced } from './ui/Advanced'
 import { Collectives } from './ui/Collectives'
 import { Controls } from './ui/Controls'
 import { Readout } from './ui/Readout'
@@ -47,6 +48,15 @@ export default function App() {
     writeStateToLocation(state)
   }, [state])
 
+  // The configuration lives in the URL, so the URL has to be able to drive it
+  // back: browser back and forward, and a link edited by hand, both change the
+  // hash without reloading the document.
+  useEffect(() => {
+    const onHashChange = () => setState(readStateFromLocation())
+    window.addEventListener('hashchange', onHashChange)
+    return () => window.removeEventListener('hashchange', onHashChange)
+  }, [])
+
   const topology = TOPOLOGIES[state.topologyId] ?? DGX_H100
   const efficiency = state.showTheoretical ? IDEAL_EFFICIENCY : H100_EFFICIENCY
 
@@ -66,25 +76,38 @@ export default function App() {
     data: state.dataParallel,
   }
 
-  const inference = useMemo(() => {
-    if (!spec || state.phase !== 'inference') return undefined
-    return analyseInference({
-      spec,
-      topology,
-      parallelism,
-      batch: state.batch,
-      promptLength: state.promptLength,
-      generateLength: state.generateLength,
-      weightDtype: state.weightDtype,
-      kvDtype: state.kvDtype,
-      activationDtype: 'bf16',
-      efficiency,
-      overhead: H100_OVERHEAD,
-      cudaGraph: state.cudaGraph,
-      flashAttention: state.flashAttention,
-    })
+  // The topology describes a node. Training routinely spans many, so the cluster
+  // size is whatever the sharding degrees multiply out to.
+  const worldSize = parallelism.tensor * parallelism.pipeline * parallelism.data
+
+  // Shared with the sharding search, so both are costing the same workload.
+  const inferenceConfig = useMemo(
+    () =>
+      spec
+        ? ({
+            spec,
+            topology,
+            parallelism,
+            batch: state.batch,
+            promptLength: state.promptLength,
+            generateLength: state.generateLength,
+            weightDtype: state.weightDtype,
+            kvDtype: state.kvDtype,
+            activationDtype: 'bf16' as const,
+            efficiency,
+            overhead: H100_OVERHEAD,
+            cudaGraph: state.cudaGraph,
+            flashAttention: state.flashAttention,
+          } satisfies InferenceConfig)
+        : undefined,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [spec, topology, state, efficiency])
+    [spec, topology, state, efficiency],
+  )
+
+  const inference = useMemo(() => {
+    if (!inferenceConfig || state.phase !== 'inference') return undefined
+    return analyseInference(inferenceConfig)
+  }, [inferenceConfig, state.phase])
 
   const training = useMemo(() => {
     if (!spec || state.phase !== 'training') return undefined
@@ -185,7 +208,10 @@ export default function App() {
         <header className="masthead">
           <h1>Compute Visualizer</h1>
           <span className="sub">
-            {topology.name} · {spec?.name ?? 'no model'}
+            {worldSize === topology.gpus
+              ? topology.name
+              : `${worldSize} × ${topology.accelerator.name}`}{' '}
+            · {spec?.name ?? 'no model'}
           </span>
           <a href="https://github.com/alpharomercoma/compute-visualizer#readme" target="_blank" rel="noreferrer">
             How this is calculated
@@ -194,7 +220,28 @@ export default function App() {
 
         <Controls state={state} onChange={setState} topology={topology} presets={PRESETS} />
 
-        <div aria-hidden="true" />
+        {/* Bottom-aligned and narrow, so the board stays visible around it.
+            Panels scattered over the scene rather than a wall of chrome. */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'flex-end',
+            justifyContent: 'center',
+            pointerEvents: 'none',
+            minHeight: 0,
+          }}
+        >
+          <div style={{ width: 290, maxHeight: '100%', display: 'flex' }}>
+            {inferenceConfig && (
+              <Advanced
+                state={state}
+                onChange={setState}
+                baseConfig={inferenceConfig}
+                worldSize={topology.gpus}
+              />
+            )}
+          </div>
+        </div>
 
         <Readout
           state={state}

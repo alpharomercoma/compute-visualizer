@@ -60,6 +60,12 @@ export interface InferenceCapacityInput {
   readonly contextLength: number
   readonly weightDtype: Dtype
   readonly kvDtype: Dtype
+  /**
+   * Activation precision, which is NOT the KV precision. W4A16 with an fp8 KV
+   * cache runs activations at 16 bits; charging them at the KV's one byte
+   * halves the estimate.
+   */
+  readonly activationDtype: Dtype
 }
 
 /**
@@ -68,7 +74,16 @@ export interface InferenceCapacityInput {
  * Stages are only equal when `p` divides `L`, and it is the biggest stage that
  * runs out of memory first, so that is what gets sized.
  */
-const layersPerStage = (numLayers: number, pipeline: number) => Math.ceil(numLayers / pipeline)
+const layersPerStage = (numLayers: number, pipeline: number) => {
+  let largest = 0
+  for (let stage = 0; stage < pipeline; stage++) {
+    largest = Math.max(
+      largest,
+      Math.floor((numLayers * (stage + 1)) / pipeline) - Math.floor((numLayers * stage) / pipeline),
+    )
+  }
+  return largest
+}
 
 export function inferenceCapacity(input: InferenceCapacityInput): CapacityReport {
   const { spec, accelerator, parallelism: par, batch, contextLength } = input
@@ -92,11 +107,7 @@ export function inferenceCapacity(input: InferenceCapacityInput): CapacityReport
       : kvHeadsPerRank(spec, par.tensor) / spec.attention.numKvHeads
   const kvCache = bytes(kvPerTokenPerLayer * kvShard * contextLength * batch * stageLayers)
 
-  // Inference activations are transient: a few layers' worth of the residual
-  // stream plus attention workspace, not the whole stack.
-  const activations = bytes(
-    4 * batch * Math.max(1, contextLength / 64) * spec.hiddenSize * DTYPE_BYTES[input.kvDtype],
-  )
+  const activations = bytes(inferenceActivations(input, batch, contextLength))
 
   const zero = bytes(0)
   const total = bytes(weights + kvCache + activations + RUNTIME_RESERVE)
@@ -115,9 +126,30 @@ export function inferenceCapacity(input: InferenceCapacityInput): CapacityReport
     },
     available,
     headroom: bytes(Math.max(0, available - total)),
-    maxContextLength: solveMaxContext(input, weights, activations, available),
-    maxBatch: solveMaxBatch(input, weights, activations, available),
+    maxContextLength: solveMaxContext(input, weights, available),
+    maxBatch: solveMaxBatch(input, weights, available),
   }
+}
+
+/**
+ * Inference activations: transient residual-stream and attention workspace, not
+ * the whole stack.
+ *
+ * Grows with BOTH batch and context, which is why the solvers below cannot treat
+ * it as a constant while searching over either.
+ */
+function inferenceActivations(
+  input: InferenceCapacityInput,
+  batch: number,
+  contextLength: number,
+): number {
+  return (
+    4 *
+    batch *
+    Math.max(1, contextLength / 64) *
+    input.spec.hiddenSize *
+    DTYPE_BYTES[input.activationDtype]
+  )
 }
 
 function verdictFor(total: Bytes, available: Bytes): Verdict {
@@ -137,35 +169,60 @@ function kvBytesPerToken(input: InferenceCapacityInput): number {
   return perTokenPerLayer * shard * stageLayers
 }
 
+/**
+ * Whether a (batch, context) pair fits, counting everything that grows with it.
+ *
+ * An earlier version solved these by subtracting the CURRENT activation figure
+ * and dividing the remainder — which ignored that activations grow with the very
+ * quantity being solved for, and so advertised limits that do not fit.
+ */
+function fits(
+  input: InferenceCapacityInput,
+  weights: Bytes,
+  available: Bytes,
+  batch: number,
+  contextLength: number,
+): boolean {
+  const kv = kvBytesPerToken(input) * batch * contextLength
+  const activations = inferenceActivations(input, batch, contextLength)
+  return weights + kv + activations + RUNTIME_RESERVE <= available
+}
+
+/** Largest value in [0, hi] satisfying a monotone-decreasing predicate. */
+function largestThatFits(hi: number, ok: (value: number) => boolean): number {
+  if (!ok(1)) return 0
+  let low = 1
+  let high = hi
+  if (ok(high)) return high
+  while (high - low > 1) {
+    const mid = Math.floor((low + high) / 2)
+    if (ok(mid)) low = mid
+    else high = mid
+  }
+  return low
+}
+
 function solveMaxContext(
   input: InferenceCapacityInput,
   weights: Bytes,
-  activations: Bytes,
   available: Bytes,
 ): number {
-  const spare = available - weights - activations - RUNTIME_RESERVE
-  if (spare <= 0) return 0
-  const perToken = kvBytesPerToken(input) * input.batch
-  if (perToken <= 0) return input.spec.maxPositionEmbeddings
-
-  const affordable = Math.floor(spare / perToken)
   // Offering more context than the model was trained for produces gibberish,
   // not a longer memory, so the trained limit caps the answer.
-  const trained = input.spec.maxPositionEmbeddings || affordable
-  return Math.max(0, Math.min(affordable, trained))
+  const trained = input.spec.maxPositionEmbeddings || 1_000_000
+  return largestThatFits(trained, (context) =>
+    fits(input, weights, available, input.batch, context),
+  )
 }
 
-function solveMaxBatch(
-  input: InferenceCapacityInput,
-  weights: Bytes,
-  activations: Bytes,
-  available: Bytes,
-): number {
-  const spare = available - weights - activations - RUNTIME_RESERVE
-  if (spare <= 0) return 0
-  const perSequence = kvBytesPerToken(input) * input.contextLength
-  if (perSequence <= 0) return Number.POSITIVE_INFINITY
-  return Math.max(0, Math.floor(spare / perSequence))
+function solveMaxBatch(input: InferenceCapacityInput, weights: Bytes, available: Bytes): number {
+  // A finite cap rather than Infinity: an unbounded batch is never a useful
+  // answer to display, and a zero-length context is a degenerate input rather
+  // than licence to claim infinite capacity.
+  const CAP = 65_536
+  return largestThatFits(CAP, (batch) =>
+    fits(input, weights, available, batch, Math.max(1, input.contextLength)),
+  )
 }
 
 export type OptimizerKind = 'adam-mixed' | 'adam-fp32-grads' | 'sgd-momentum' | 'adam-8bit'
@@ -246,7 +303,12 @@ export function trainingCapacity(input: TrainingCapacityInput): CapacityReport {
 
   const counted = countParameters(spec)
   const perParam = OPTIMIZER_BYTES[input.optimizer]
-  const shardedParams = (counted.unique * layerFraction) / par.tensor
+  // Memory follows the STORED count, not the analytic one: a tied checkpoint
+  // that ships a redundant lm_head really does load those bytes, and using the
+  // unique count would understate weights, gradients and optimizer state
+  // together — understating OOM risk in the one place that must not be
+  // optimistic.
+  const shardedParams = (counted.stored * layerFraction) / par.tensor
 
   // ZeRO partitions across the data-parallel dimension only.
   const dp = par.data
@@ -263,14 +325,33 @@ export function trainingCapacity(input: TrainingCapacityInput): CapacityReport {
   const c = input.activationConstant ?? 34
   const a = spec.attention.numQueryHeads
   const h = spec.hiddenSize
+  // Korthikanti's three cases are genuinely different, and an earlier version of
+  // this had the TP-only and TP+SP branches algebraically identical — both
+  // dividing the whole bracket by t — which quietly claimed sequence
+  // parallelism saved nothing.
+  //
+  //   Eq. (1)  no parallelism : s·b·h·(34 + 5as/h)
+  //   Eq. (2)  TP only        : s·b·h·(10 + 24/t + 5as/(ht))
+  //   Eq. (4)  TP + SP        : (s·b·h/t)·(34 + 5as/h)
+  //
+  // The 10 in Eq. (2) is the layer-norms and post-block dropouts, which tensor
+  // parallelism leaves replicated on every rank and sequence parallelism is
+  // precisely what shards.
+  const REPLICATED_UNDER_TP = 10
+  const attentionTerm = (5 * a * s) / h
+
   const perLayerElements = input.fullRecompute
     ? // Only the layer input survives; everything else is recomputed.
       (s * b * h) / (input.sequenceParallel ? par.tensor : 1)
     : input.selectiveRecompute
-      ? (s * b * h * c) / par.tensor
+      ? // Eq. (6): the attention-square tensors are discarded and recomputed.
+        (s * b * h * c) / par.tensor
       : input.sequenceParallel
-        ? ((s * b * h) / par.tensor) * (c + (5 * a * s) / h)
-        : s * b * h * (c / par.tensor + (5 * a * s) / (h * par.tensor))
+        ? ((s * b * h) / par.tensor) * (c + attentionTerm)
+        : s * b * h *
+          (REPLICATED_UNDER_TP +
+            (c - REPLICATED_UNDER_TP) / par.tensor +
+            attentionTerm / par.tensor)
 
   // The first pipeline stage must keep activations for `p` in-flight microbatches
   // to stay pressurised, even though it owns only L/p layers.

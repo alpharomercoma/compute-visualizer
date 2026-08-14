@@ -26,6 +26,7 @@ export function Controls({ state, onChange, topology, presets }: ControlsProps) 
   const preset = presets.find((p) => p.id === state.modelId)
   const splits = shardingOptions(topology.gpus)
   const currentSplit = `${state.tensorParallel}-${state.pipelineParallel}-${state.dataParallel}`
+  const worldSize = state.tensorParallel * state.pipelineParallel * state.dataParallel
 
   return (
     <aside className="panel">
@@ -92,33 +93,77 @@ export function Controls({ state, onChange, topology, presets }: ControlsProps) 
         </select>
       </div>
 
-      <div className="field">
-        <label className="label" htmlFor="split">
-          Sharding — tensor / pipeline / data
-        </label>
-        <select
-          id="split"
-          value={currentSplit}
-          onChange={(e) => {
-            const [tensor, pipeline, data] = e.target.value.split('-').map(Number)
-            onChange({
-              ...state,
-              tensorParallel: tensor!,
-              pipelineParallel: pipeline!,
-              dataParallel: data!,
-            })
-          }}
-        >
-          {splits.map((split) => (
-            <option
-              key={`${split.tensor}-${split.pipeline}-${split.data}`}
-              value={`${split.tensor}-${split.pipeline}-${split.data}`}
-            >
-              TP {split.tensor} · PP {split.pipeline} · DP {split.data}
-            </option>
-          ))}
-        </select>
-      </div>
+      {/* Inference is served from one node, so its split has to divide that
+          node's GPU count. Training routinely spans many, so there the degrees
+          are free and the cluster size is derived from them — the topology
+          describes a node, not the whole machine. */}
+      {state.phase === 'inference' ? (
+        <div className="field">
+          <label className="label" htmlFor="split">
+            Sharding — tensor / pipeline / data
+          </label>
+          <select
+            id="split"
+            value={currentSplit}
+            onChange={(e) => {
+              const [tensor, pipeline, data] = e.target.value.split('-').map(Number)
+              onChange({
+                ...state,
+                tensorParallel: tensor!,
+                pipelineParallel: pipeline!,
+                dataParallel: data!,
+              })
+            }}
+          >
+            {splits.map((split) => (
+              <option
+                key={`${split.tensor}-${split.pipeline}-${split.data}`}
+                value={`${split.tensor}-${split.pipeline}-${split.data}`}
+              >
+                TP {split.tensor} · PP {split.pipeline} · DP {split.data}
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : (
+        <div className="field">
+          <label className="label">Sharding degrees</label>
+          <div className="row">
+            {(
+              [
+                ['tensorParallel', 'TP', topology.gpus],
+                ['pipelineParallel', 'PP', 64],
+                ['dataParallel', 'DP', 512],
+              ] as const
+            ).map(([key, short, max]) => (
+              <div key={key}>
+                <label className="label" htmlFor={key} style={{ marginBottom: 3 }}>
+                  {short}
+                </label>
+                <select
+                  id={key}
+                  value={state[key]}
+                  onChange={(e) => set(key, Number(e.target.value))}
+                >
+                  {powersOfTwo(max).map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ))}
+          </div>
+          <p className="note" style={{ marginTop: 6 }}>
+            {worldSize.toLocaleString()} GPUs
+            {topology.gpus > 1 && ` · ${Math.ceil(worldSize / topology.gpus)} node${
+              Math.ceil(worldSize / topology.gpus) === 1 ? '' : 's'
+            }`}
+            . Tensor parallelism is capped at one node, because crossing the
+            node boundary with it is rarely worth the bandwidth.
+          </p>
+        </div>
+      )}
 
       <div className="section-head">Precision</div>
       <div className="row field">
@@ -340,6 +385,13 @@ function Toggle({
       </label>
     </div>
   )
+}
+
+/** Parallelism degrees are powers of two in every framework worth modelling. */
+function powersOfTwo(max: number): number[] {
+  const out: number[] = []
+  for (let n = 1; n <= max; n *= 2) out.push(n)
+  return out
 }
 
 function groupBy<T>(items: readonly T[], key: (item: T) => string): Record<string, T[]> {

@@ -962,6 +962,43 @@ Two of the accepted defects were in text this document uses to warn against that
 scope-mixing in `I_N`, and a unit confusion in the section about unit confusion. That is the
 argument for the gate existing, not against it.
 
+### Gate B record
+
+The implementation was then reviewed against this specification, again by an independent model
+asked for a defect list rather than a summary. It returned 14 findings. Every one was checked by
+hand; the confirmed ones are fixed and pinned by `src/core/gate-b.test.ts`.
+
+| Defect | Consequence had it shipped |
+|---|---|
+| `ceil(L/p)` layers on *every* pipeline stage | 80 layers over 6 stages modelled as 84 |
+| LM head run on every pipeline stage, then multiplied by `p` | head charged `p` times |
+| Selective recompute as a blanket 1.1× across all kernels | an **invented constant**, wrong at every `s/h` |
+| TP-only and TP+SP activation branches algebraically identical | sequence parallelism silently saved nothing |
+| DP all-reduce depending on the last compute task | overlap structurally impossible while claimed in a comment |
+| DP all-reduce inside the microbatch schedule | charged `m` times per step instead of once |
+| Training capacity used `unique` rather than `stored` parameters | understated OOM risk |
+| Inference activations charged at KV precision | W4A16 with fp8 KV understated by 2× |
+| `maxContext`/`maxBatch` held activations constant | advertised limits that do not fit; `maxBatch` could be `Infinity` |
+| `attentionPairs()` unvalidated | `q > s` produced a **negative** pair count |
+| `algbw` and `busbw` sharing one type | the double-count was avoided by convention, not structurally |
+| `stallTime` unreachable under an earliest-start scheduler | the `serialization` class could never fire |
+| `meanContext` off by half a token | trivial, fixed |
+
+Two of these are worth naming for what they say about the method. The **invented 1.1×** was
+exactly the sin this document preaches against everywhere else, sitting unremarked in the code
+that implements it. And the **DP overlap** was asserted in a comment while the dependency edge
+made it impossible — a claim the code contradicted.
+
+Removing the 1.1× moved training MFU from 36.3% to 41.8% and put the HFU/MFU ratio at 1.066
+against the 1 + s/(18h) = 1.056 the corrected Korthikanti formula predicts. The fix made the
+numbers *more* consistent with theory, which is the sign it was a correction rather than a change.
+
+**Rejected:** the review read `activations × p` for pipeline capacity as contradicting the
+`(1 + (p−1)/(p·m))` factor quoted above. Both are in Korthikanti: the interleaved-schedule factor
+*and* the statement that the first stage must hold `p` microbatches to stay pressurised. The code
+implements the latter, which is the conservative one for 1F1B and the right choice for a check
+that decides OOM.
+
 ### Items flagged as unverified
 
 | Item | Status |

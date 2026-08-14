@@ -22,6 +22,32 @@
 
 import { type Bytes, type BytesPerSecond, type Seconds, bytesPerSecond, seconds } from './units'
 
+declare const collectiveBrand: unique symbol
+
+/**
+ * Algorithm bandwidth: buffer size over elapsed time. What timing needs.
+ *
+ * Distinct from bus bandwidth in the TYPE, not merely by convention. A review
+ * pointed out that sharing `BytesPerSecond` between the two meant the
+ * double-count was only avoided by the current call sites happening to be
+ * correct — which is not the same as being impossible. It is now impossible:
+ * a busbw figure will not compile where an algbw is required.
+ */
+export type Algbw = BytesPerSecond & { readonly [collectiveBrand]: 'algbw' }
+
+/** Bus bandwidth as `nccl-tests` reports it, ring factor already folded in. */
+export type Busbw = BytesPerSecond & { readonly [collectiveBrand]: 'busbw' }
+
+/** The user's buffer — the `S` in `algbw = S/t`. What a collective is timed on. */
+export type AlgorithmicMessage = Bytes & { readonly [collectiveBrand]: 'algorithmic' }
+
+/** Physical bytes crossing a port. For reporting only; never for timing. */
+export type WireTraffic = Bytes & { readonly [collectiveBrand]: 'wire' }
+
+export const algbw = (value: BytesPerSecond): Algbw => value as Algbw
+export const busbw = (value: BytesPerSecond): Busbw => value as Busbw
+export const algorithmicMessage = (value: Bytes): AlgorithmicMessage => value as AlgorithmicMessage
+
 export type CollectiveOp = 'all-reduce' | 'all-gather' | 'reduce-scatter' | 'broadcast' | 'all-to-all'
 
 export type CollectiveAlgorithm = 'ring' | 'tree' | 'nvls'
@@ -53,18 +79,14 @@ export function busbwFactor(op: CollectiveOp, ranks: number): number {
  * again. If a figure has already been through here, it is algbw and must not be
  * scaled a second time.
  */
-export function busbwToAlgbw(
-  busbw: BytesPerSecond,
-  op: CollectiveOp,
-  ranks: number,
-): BytesPerSecond {
-  return bytesPerSecond(busbw / busbwFactor(op, ranks))
+export function busbwToAlgbw(measured: Busbw, op: CollectiveOp, ranks: number): Algbw {
+  return algbw(bytesPerSecond(measured / busbwFactor(op, ranks)))
 }
 
 export interface CollectiveProfile {
   readonly algorithm: CollectiveAlgorithm
-  /** Large-message algorithm bandwidth. NOT busbw. [prior] */
-  readonly algbw: BytesPerSecond
+  /** Large-message algorithm bandwidth. Typed so a busbw cannot be passed. */
+  readonly algbw: Algbw
   /** Startup cost, independent of message size. [prior] */
   readonly alpha: Seconds
   readonly alphaRange: readonly [Seconds, Seconds]
@@ -75,6 +97,7 @@ export interface CollectiveProfile {
 
 const us = (n: number) => seconds(n * 1e-6)
 const GBps = (n: number) => bytesPerSecond(n * 1e9)
+const measuredBusbw = (n: number) => busbw(GBps(n))
 
 /**
  * Defaults for an 8x H100 NVSwitch node.
@@ -97,7 +120,7 @@ export function defaultProfiles(ranks: number, hasNvSwitch: boolean): Collective
   return [
     {
       algorithm: 'ring',
-      algbw: busbwToAlgbw(GBps(370), 'all-reduce', ranks),
+      algbw: busbwToAlgbw(measuredBusbw(370), 'all-reduce', ranks),
       alpha: us(5),
       alphaRange: [us(3), us(10)],
       eligible: true,
@@ -105,7 +128,7 @@ export function defaultProfiles(ranks: number, hasNvSwitch: boolean): Collective
     },
     {
       algorithm: 'tree',
-      algbw: busbwToAlgbw(GBps(250), 'all-reduce', ranks),
+      algbw: busbwToAlgbw(measuredBusbw(250), 'all-reduce', ranks),
       alpha: us(4),
       alphaRange: [us(2.5), us(8)],
       eligible: true,
@@ -117,7 +140,7 @@ export function defaultProfiles(ranks: number, hasNvSwitch: boolean): Collective
       // the physical traffic. The measured large-message algbw is what belongs
       // here regardless -- not the 450 GB/s line rate, which no algorithm
       // reaches.
-      algbw: GBps(274),
+      algbw: algbw(GBps(274)),
       alpha: us(5),
       alphaRange: [us(3), us(10)],
       // NVLS needs NVSwitch multicast support and NCCL >= 2.17.
@@ -136,7 +159,10 @@ export function defaultProfiles(ranks: number, hasNvSwitch: boolean): Collective
  * `S` that nccl-tests divides by elapsed time. No ring factor. See the module
  * comment for why that is stated three times.
  */
-export function collectiveTime(messageBytes: Bytes, profile: CollectiveProfile): Seconds {
+export function collectiveTime(
+  messageBytes: AlgorithmicMessage,
+  profile: CollectiveProfile,
+): Seconds {
   if (!profile.eligible) return seconds(Number.POSITIVE_INFINITY)
   if (messageBytes === 0) return profile.alpha
   return seconds(profile.alpha + messageBytes / profile.algbw)
@@ -157,7 +183,7 @@ export interface CollectiveChoice {
  * thresholds would be inventing specificity we do not have.
  */
 export function chooseCollective(
-  messageBytes: Bytes,
+  messageBytes: AlgorithmicMessage,
   profiles: readonly CollectiveProfile[],
 ): CollectiveChoice {
   let best: CollectiveChoice | undefined
@@ -201,11 +227,11 @@ export function latencyBandwidthKnee(profile: CollectiveProfile): Bytes {
  * genuinely vanishes.
  */
 export function wireBytes(
-  messageBytes: Bytes,
+  messageBytes: AlgorithmicMessage,
   op: CollectiveOp,
   ranks: number,
   algorithm: CollectiveAlgorithm,
-): Bytes {
-  if (algorithm === 'nvls') return messageBytes
-  return (messageBytes * busbwFactor(op, ranks)) as Bytes
+): WireTraffic {
+  if (algorithm === 'nvls') return messageBytes as unknown as WireTraffic
+  return (messageBytes * busbwFactor(op, ranks)) as WireTraffic
 }

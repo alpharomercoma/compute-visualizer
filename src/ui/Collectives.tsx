@@ -1,4 +1,9 @@
-import { chooseCollective, defaultProfiles, latencyBandwidthKnee } from '../core/collectives'
+import {
+  algorithmicMessage,
+  chooseCollective,
+  defaultProfiles,
+  latencyBandwidthKnee,
+} from '../core/collectives'
 import { bytes, KiB, MiB } from '../core/units'
 import type { Topology } from '../core/hardware'
 
@@ -37,7 +42,7 @@ export function Collectives({
   }
 
   const profiles = defaultProfiles(tensorParallel, topology.fabric === 'nvswitch')
-  const choice = chooseCollective(bytes(messageBytes), profiles)
+  const choice = chooseCollective(algorithmicMessage(bytes(messageBytes)), profiles)
   const knee = latencyBandwidthKnee(choice.profile)
   const transfer = messageBytes / choice.profile.algbw
 

@@ -3,7 +3,14 @@ import { DGX_H100, H100_SXM5, ridgePoint } from './hardware'
 import { H100_EFFICIENCY, H100_OVERHEAD } from './efficiency'
 import { type HuggingFaceConfig, fromHuggingFaceConfig } from './modelspec'
 import { analyseInference, computeBoundBatch } from './inference'
-import { chooseCollective, busbwToAlgbw, defaultProfiles, latencyBandwidthKnee } from './collectives'
+import {
+  algorithmicMessage,
+  busbw,
+  busbwToAlgbw,
+  chooseCollective,
+  defaultProfiles,
+  latencyBandwidthKnee,
+} from './collectives'
 import { attentionPairs } from './kernels'
 import { GBps, KiB, MiB, toMilliseconds } from './units'
 
@@ -122,7 +129,7 @@ describe('scenario 1: Llama-3-70B BF16, 8xH100 TP=8, batch 32, 2048 context', ()
 describe('scenario 2: batch-1 decode is latency-bound, not bandwidth-bound', () => {
   it('classifies the collective as latency-bound at 16 KiB', () => {
     const profiles = defaultProfiles(8, true)
-    const choice = chooseCollective(KiB(16), profiles)
+    const choice = chooseCollective(algorithmicMessage(KiB(16)), profiles)
     expect(choice.latencyBound).toBe(true)
   })
 
@@ -218,7 +225,7 @@ describe('scenario 3: the tensor-parallel scaling limit', () => {
 describe('the busbw double-counting trap', () => {
   it('converts a published ring busbw to algbw exactly once', () => {
     // 370 GB/s busbw at 8 ranks is 370 / 1.75 = 211 GB/s algbw.
-    const algbw = busbwToAlgbw(GBps(370), 'all-reduce', 8)
+    const algbw = busbwToAlgbw(busbw(GBps(370)), 'all-reduce', 8)
     expect(algbw / 1e9).toBeCloseTo(211.4, 0)
   })
 

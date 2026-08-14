@@ -11,7 +11,12 @@ import {
   type Parallelism,
   inferenceCapacity,
 } from './capacity'
-import { type CollectiveProfile, chooseCollective, defaultProfiles } from './collectives'
+import {
+  type CollectiveProfile,
+  algorithmicMessage,
+  chooseCollective,
+  defaultProfiles,
+} from './collectives'
 import { type EfficiencyModel, type OverheadModel } from './efficiency'
 import {
   DTYPE_BYTES,
@@ -190,7 +195,9 @@ function buildForwardPass(config: InferenceConfig, queryLength: number, contextL
     defaultProfiles(par.tensor, config.topology.fabric === 'nvswitch')
 
   // The all-reduce payload is the full hidden state for every token in flight.
-  const messageBytes = bytes(tokens * spec.hiddenSize * DTYPE_BYTES[config.activationDtype])
+  const messageBytes = algorithmicMessage(
+    bytes(tokens * spec.hiddenSize * DTYPE_BYTES[config.activationDtype]),
+  )
   const needsCollectives = par.tensor > 1
 
   const tasks: Task[] = []
@@ -198,8 +205,8 @@ function buildForwardPass(config: InferenceConfig, queryLength: number, contextL
   let previous: string | undefined
   let collectiveBytes = 0
 
-  // Only the layers this rank's pipeline stage owns.
-  const stageLayers = Math.ceil(spec.numLayers / par.pipeline)
+  // The largest stage: it sets the pipeline's pace and is the one that OOMs.
+  const stageLayers = largestStage(spec.numLayers, par.pipeline)
 
   for (let layer = 0; layer < stageLayers; layer++) {
     const kernels = layerKernels(workload, layer)
@@ -240,7 +247,9 @@ function buildForwardPass(config: InferenceConfig, queryLength: number, contextL
     })
   }
 
-  // Serving needs one logit row per sequence, not one per prompt token.
+  // Serving needs one logit row per sequence, not one per prompt token. And the
+  // head lives on the FINAL pipeline stage only — running it on every stage and
+  // then multiplying by the stage count charges it `p` times over.
   const head = lmHead(workload, config.batch)
   const headTiming = kernelDuration(head, config, tokens)
   tasks.push({
@@ -248,7 +257,10 @@ function buildForwardPass(config: InferenceConfig, queryLength: number, contextL
     label: head.name,
     deps: previous ? [previous] : [],
     resource: 'gpu',
-    duration: headTiming.duration,
+    // Charged once across the whole traversal: pipelineTraversal multiplies the
+    // stage time by p, so the head is divided by p here to survive that
+    // multiplication exactly once.
+    duration: seconds(headTiming.duration / par.pipeline),
     limitedBy: headTiming.limitedBy,
   })
   kernelsSeen.push(head)
@@ -283,6 +295,28 @@ function pipelineTraversal(
   const hop = payload / link + config.overhead.launchSeconds
 
   return seconds(stageTime * p + hop * (p - 1))
+}
+
+/**
+ * Layers owned by a given pipeline stage.
+ *
+ * `ceil(L/p)` for every stage overcounts whenever `p` does not divide `L` — 80
+ * layers over 6 stages becomes 6 × 14 = 84 — which inflates latency, FLOPs and
+ * capacity together. This partition sums to exactly `L`.
+ */
+export function layersInStage(numLayers: number, pipeline: number, stage: number): number {
+  return (
+    Math.floor((numLayers * (stage + 1)) / pipeline) - Math.floor((numLayers * stage) / pipeline)
+  )
+}
+
+/** The largest stage, which is the one that runs out of memory first. */
+export function largestStage(numLayers: number, pipeline: number): number {
+  let largest = 0
+  for (let stage = 0; stage < pipeline; stage++) {
+    largest = Math.max(largest, layersInStage(numLayers, pipeline, stage))
+  }
+  return largest
 }
 
 function runPhase(config: InferenceConfig, queryLength: number, contextLength: number): PhaseResult {
@@ -341,6 +375,7 @@ export function analyseInference(config: InferenceConfig): InferenceResult {
     contextLength: config.promptLength + config.generateLength,
     weightDtype: config.weightDtype,
     kvDtype: config.kvDtype,
+    activationDtype: config.activationDtype,
   })
 
   // An infeasible configuration gets a verdict, not a time. Reporting a fast
@@ -352,9 +387,10 @@ export function analyseInference(config: InferenceConfig): InferenceResult {
   const prefill = runPhase(config, config.promptLength, config.promptLength)
 
   // Decode cost grows with context, so the midpoint of the generation is the
-  // representative step. Using the prompt length alone understates long
-  // generations; using the final length overstates them.
-  const meanContext = config.promptLength + Math.max(0, config.generateLength - 1) / 2
+  // representative step. Prefill produces token 1; the decode steps counted in
+  // end-to-end latency produce tokens 2..n at contexts prompt+1..prompt+n-1,
+  // whose mean is prompt + n/2.
+  const meanContext = config.promptLength + Math.max(0, config.generateLength) / 2
   const decode = runPhase(config, 1, Math.round(meanContext))
 
   // A token must cross every pipeline stage; a stage makespan is not a step time.

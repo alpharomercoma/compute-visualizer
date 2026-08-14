@@ -16,9 +16,15 @@ import {
   OPTIMIZER_BYTES,
   trainingCapacity,
 } from './capacity'
-import { type CollectiveProfile, chooseCollective, defaultProfiles } from './collectives'
+import {
+  type CollectiveProfile,
+  algorithmicMessage,
+  chooseCollective,
+  defaultProfiles,
+} from './collectives'
 import type { EfficiencyModel, OverheadModel } from './efficiency'
 import { DTYPE_BYTES, type Dtype, type TensorPrecision, type Topology, DTYPE_COMPUTES_AS } from './hardware'
+import { largestStage } from './inference'
 import { type Workload, layerKernels, lmHead, modelFlops } from './kernels'
 import type { TransformerSpec } from './modelspec'
 import { countParameters, nonEmbeddingParameters } from './params'
@@ -121,13 +127,21 @@ export function analyseTraining(config: TrainingConfig): TrainingResult {
   const profiles =
     config.collectiveProfiles ?? defaultProfiles(par.tensor, topology.fabric === 'nvswitch')
 
-  const stageLayers = Math.ceil(spec.numLayers / par.pipeline)
+  // The largest stage sets the pace; ceil() for every stage would model layers
+  // that do not exist whenever the pipeline degree does not divide the model.
+  const stageLayers = largestStage(spec.numLayers, par.pipeline)
   const tokens = config.microBatch * config.sequenceLength
 
-  // Recomputation multiplies forward work rather than adding a term: full
-  // recompute runs the whole layer forward again before backward, selective
-  // recompute only the attention it discarded.
-  const recomputeFactor = config.fullRecompute ? 4 / 3 : config.selectiveRecompute ? 1.1 : 1
+  // Full recomputation runs every layer's forward pass a second time, so it
+  // multiplies: 3x becomes 4x.
+  //
+  // SELECTIVE recomputation does not multiply. It re-runs only the attention
+  // tensors it discarded, which is an additive term of 4·B·s²·h per layer and
+  // is applied to the attention kernel alone below. An earlier version charged
+  // a blanket 1.1x across every kernel including the MLP, norms and LM head —
+  // an invented constant, wrong at every s/h, and exactly the kind of number
+  // this project refuses to ship elsewhere.
+  const forwardRepeats = config.fullRecompute ? 4 / 3 : 1
 
   const tasks: Task[] = []
   let previous: string | undefined
@@ -136,7 +150,14 @@ export function analyseTraining(config: TrainingConfig): TrainingResult {
 
   for (let layer = 0; layer < stageLayers; layer++) {
     for (const kernel of layerKernels(workload, layer)) {
-      const scaled = kernel.flops * BACKWARD_MULTIPLIER * recomputeFactor
+      // Selective recompute adds one extra forward of the attention kernel and
+      // nothing else.
+      const selectiveExtra =
+        config.selectiveRecompute && !config.fullRecompute && kernel.kernelClass === 'attention'
+          ? kernel.flops
+          : 0
+
+      const scaled = kernel.flops * BACKWARD_MULTIPLIER * forwardRepeats + selectiveExtra
       const scaledBytes = kernel.hbmBytes * BACKWARD_MULTIPLIER
       forwardBackwardFlops += scaled
       hbmBytes += scaledBytes
@@ -168,7 +189,9 @@ export function analyseTraining(config: TrainingConfig): TrainingResult {
 
     // Tensor-parallel all-reduces, twice forward and twice backward.
     if (par.tensor > 1) {
-      const message = bytes(tokens * spec.hiddenSize * DTYPE_BYTES[config.activationDtype])
+      const message = algorithmicMessage(
+        bytes(tokens * spec.hiddenSize * DTYPE_BYTES[config.activationDtype]),
+      )
       for (let i = 0; i < 4; i++) {
         const choice = chooseCollective(message, profiles)
         const id = `L${layer}.tp${i}`
@@ -197,33 +220,40 @@ export function analyseTraining(config: TrainingConfig): TrainingResult {
     duration: seconds(headFlops / (peak * config.efficiency.gemmLarge.value)),
     limitedBy: 'compute',
   })
-  const lastCompute = 'lm-head'
 
-  // The data-parallel gradient all-reduce. Its dependency is the backward pass,
-  // not the optimizer, so the scheduler is free to overlap it with whatever
-  // compute remains -- which is exactly the behaviour that makes DP training
-  // tolerable and TP decode intolerable.
+  const scheduled = schedule(tasks)
+
+  /**
+   * The data-parallel gradient reduction.
+   *
+   * It runs ONCE per optimizer step, not once per microbatch: gradient
+   * accumulation sums locally across microbatches and only the total is
+   * reduced. Putting it inside the microbatch schedule — which an earlier
+   * version did — charged it `m` times over.
+   *
+   * It is also the reason DP training is tolerable while TP decode is not.
+   * Gradients for the upper layers are ready before backward reaches the bottom,
+   * so their buckets reduce while lower layers are still computing. Only the
+   * part that outlives the final microbatch's backward pass extends the step.
+   */
   let exposedCommunication = seconds(0)
   if (par.data > 1) {
     const counted = countParameters(spec)
-    const shardedParams = (counted.unique * (stageLayers / spec.numLayers)) / par.tensor
-    const gradientBytes = bytes(shardedParams * OPTIMIZER_BYTES[config.optimizer].gradients)
+    const shardedParams = (counted.stored * (stageLayers / spec.numLayers)) / par.tensor
     // ZeRO-3 adds parameter all-gathers in both passes: 3 psi against 2 psi.
     const volumeFactor = config.zeroStage >= 3 ? 1.5 : 1
-    const choice = chooseCollective(bytes(gradientBytes * volumeFactor), profiles)
+    const totalGradientBytes = shardedParams * OPTIMIZER_BYTES[config.optimizer].gradients
 
-    tasks.push({
-      id: 'dp-allreduce',
-      label: 'gradient all-reduce',
-      deps: [lastCompute],
-      resource: 'network',
-      duration: choice.time,
-      limitedBy: choice.latencyBound ? 'network-latency' : 'network-bandwidth',
-    })
-    exposedCommunication = choice.time
+    const buckets = 8
+    const perBucket = algorithmicMessage(bytes((totalGradientBytes * volumeFactor) / buckets))
+    const bucketTime = chooseCollective(perBucket, profiles).time
+    const allBuckets = bucketTime * buckets
+
+    // Every bucket but the last has a backward pass still running behind it to
+    // hide under; the last one has nothing left and is exposed in full.
+    const hideableWindow = scheduled.makespan * ((buckets - 1) / buckets)
+    exposedCommunication = seconds(Math.max(bucketTime, allBuckets - hideableWindow))
   }
-
-  const scheduled = schedule(tasks)
 
   // Pipeline bubble: (p-1)/m, reduced by the interleaving factor when used.
   const microbatches = config.gradientAccumulation
@@ -232,7 +262,10 @@ export function analyseTraining(config: TrainingConfig): TrainingResult {
     par.pipeline > 1 ? (par.pipeline - 1) / (microbatches * chunks) : 0
 
   const perMicrobatch = scheduled.makespan
-  const stepTime = seconds(perMicrobatch * microbatches * (1 + bubbleFraction))
+  // The gradient reduction is added once, after every microbatch has run.
+  const stepTime = seconds(
+    perMicrobatch * microbatches * (1 + bubbleFraction) + exposedCommunication,
+  )
 
   const nonEmbedding = nonEmbeddingParameters(spec)
   // Model FLOPs: forward plus backward, no recomputation, whole cluster.
