@@ -37,7 +37,7 @@ export interface RooflineProps {
   readonly height?: number
 }
 
-const PAD = { top: 16, right: 130, bottom: 34, left: 62 }
+const PAD = { top: 18, right: 140, bottom: 40, left: 68 }
 
 /**
  * Nudges labels apart so they can all be read.
@@ -56,7 +56,7 @@ interface Placed {
 
 function placeLabels(
   items: ReadonlyArray<{ point: OperatingPoint; x: number; y: number }>,
-  minGap = 11,
+  minGap = 14,
 ): Placed[] {
   const byHeight = [...items].sort((a, b) => a.y - b.y)
 
@@ -75,7 +75,7 @@ export function Roofline({
   points,
   asymptotes,
   showTheoretical,
-  height = 250,
+  height = 300,
 }: RooflineProps) {
   // A wide viewBox keeps the rendered height near this figure at the widths this
   // panel actually gets, so the chart does not grow to half the viewport.
@@ -110,6 +110,7 @@ export function Roofline({
     <svg
       className="chart"
       viewBox={`0 0 ${width} ${height}`}
+      style={{ maxHeight: 300 }}
       role="img"
       aria-label={`Roofline. Ridge point ${model.ridgePoint.toFixed(0)} FLOP per byte. ${points
         .map(
@@ -154,7 +155,7 @@ export function Roofline({
         strokeDasharray="2 4"
       />
       <text x={px(model.ridgePoint) + 4} y={PAD.top + 9} fill="var(--ink-2)">
-        RIDGE {model.ridgePoint.toFixed(0)}
+        Ridge {model.ridgePoint.toFixed(0)}
       </text>
 
       {asymptotes && (
@@ -173,7 +174,7 @@ export function Roofline({
             textAnchor="middle"
             fill="var(--c-memory)"
           >
-            ATTN
+            Attention
           </text>
         </g>
       )}
@@ -209,14 +210,14 @@ export function Roofline({
               </title>
             </circle>
             <text x={x + 10} y={labelY} fill="var(--ink-2)">
-              {point.label.toUpperCase()}
+              {point.label}
             </text>
           </g>
         )
       })}
 
-      <text className="axis-title" x={PAD.left} y={height - 4}>
-        ARITHMETIC INTENSITY — FLOP / BYTE OF HBM TRAFFIC
+      <text x={PAD.left} y={height - 6}>
+        Arithmetic intensity — FLOP per byte of HBM traffic
       </text>
     </svg>
   )

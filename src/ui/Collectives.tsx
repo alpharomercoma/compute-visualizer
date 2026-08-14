@@ -35,7 +35,7 @@ export function Collectives({
 }: CollectivesProps) {
   if (tensorParallel <= 1) {
     return (
-      <p className="note">
+      <p className="small muted">
         No collectives: a single rank holds the whole model, so nothing crosses the interconnect.
       </p>
     )
@@ -48,7 +48,7 @@ export function Collectives({
 
   return (
     <div>
-      <dl style={{ margin: 0 }}>
+      <dl className="rows">
         <Row label="Algorithm" value={choice.profile.algorithm.toUpperCase()} />
         <Row label="Message" value={bytesLabel(messageBytes)} />
         <Row label="Per step" value={`${collectivesPerStep}`} />
@@ -56,7 +56,7 @@ export function Collectives({
         <Row label="On the wire" value={us(transfer)} />
       </dl>
 
-      <p className="note" style={{ marginTop: 8 }}>
+      <p className="small muted" style={{ marginTop: '0.75rem' }}>
         {choice.latencyBound ? (
           <>
             Latency-bound. Transfer is {(choice.profile.alpha / transfer).toFixed(0)}× faster than
@@ -77,9 +77,9 @@ export function Collectives({
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
-    <div className="metric">
+    <div className="row">
       <dt>{label}</dt>
-      <dd style={{ fontSize: 'var(--t-small)' }}>{value}</dd>
+      <dd>{value}</dd>
     </div>
   )
 }

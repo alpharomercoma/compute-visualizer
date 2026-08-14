@@ -94,15 +94,15 @@ export function ModelPicker({ modelId, onChange, resolved, loading, error }: Mod
         spellCheck={false}
       />
 
-      {searching && <p className="note">Searching…</p>}
-      {searchError && <p className="note">Search failed: {searchError}</p>}
+      {searching && <p className="small muted">Searching…</p>}
+      {searchError && <p className="small muted">Search failed: {searchError}</p>}
 
       {results.length > 0 && (
         <div
           style={{
             maxHeight: 168,
             overflowY: 'auto',
-            border: '1px solid var(--rule)',
+            border: '1px solid var(--divider)',
             borderRadius: 'var(--radius)',
             marginTop: 6,
           }}
@@ -122,16 +122,17 @@ export function ModelPicker({ modelId, onChange, resolved, loading, error }: Mod
                 textAlign: 'left',
                 background: 'transparent',
                 border: 0,
-                borderBottom: '1px solid var(--rule)',
-                padding: '5px 7px',
+                borderBottom: '1px solid var(--divider)',
+                padding: '0.5rem 0.625rem',
+                minHeight: 'var(--tap)',
                 font: 'inherit',
-                fontSize: 'var(--t-micro)',
+                fontSize: 'var(--t-label)',
                 color: 'var(--ink-2)',
                 cursor: 'pointer',
               }}
             >
               <span style={{ display: 'block', color: 'var(--ink)' }}>{model.id}</span>
-              <span className="dim">
+              <span className="small muted">
                 {model.parameterCount ? `${(model.parameterCount / 1e9).toFixed(1)}B · ` : ''}
                 {model.downloads.toLocaleString()} downloads
                 {model.gated ? ' · gated' : ''}
@@ -141,20 +142,20 @@ export function ModelPicker({ modelId, onChange, resolved, loading, error }: Mod
         </div>
       )}
 
-      {loading && <p className="note">Reading config.json…</p>}
+      {loading && <p className="small muted">Reading config.json…</p>}
       {error && (
-        <p className="note" style={{ color: 'var(--c-net-lat)' }}>
+        <p className="small muted" style={{ color: 'var(--c-net-lat)' }}>
           {error}
         </p>
       )}
       {resolved?.servedBy && resolved.servedBy !== modelId && (
-        <p className="note">
+        <p className="small muted">
           Gated. Shapes read from <strong>{resolved.servedBy}</strong>, an ungated mirror with the
           same architecture.
         </p>
       )}
       {resolved?.source === 'hub' && !resolved.servedBy && (
-        <p className="note">Shapes read from the Hub.</p>
+        <p className="small muted">Shapes read from the Hub.</p>
       )}
     </div>
   )

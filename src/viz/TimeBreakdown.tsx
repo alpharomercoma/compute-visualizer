@@ -38,11 +38,16 @@ export function TimeBreakdown({ schedule, totalSeconds }: TimeBreakdownProps) {
   const all = stalled > 0 ? [...parts, { key: 'stall' as const, label: 'Waiting', color: 'var(--c-serial)', seconds: stalled }] : parts
   const total = all.reduce((sum, part) => sum + part.seconds, 0) || totalSeconds || 1
 
-  const height = 26
-  const width = 940
+  // preserveAspectRatio="none" plus a fixed CSS height: the bar is a length
+  // encoding, so horizontal stretch is exactly right and vertical letterboxing
+  // — which rendered this at 57% of its height on desktop and 36% on a phone —
+  // is exactly wrong.
+  const height = 28
+  const width = 1000
   // A 2px surface gap keeps adjacent fills from reading as one block.
-  const gap = 2
+  const gap = 3
 
+  const dominant = all.reduce((a, b) => (b.seconds > a.seconds ? b : a), all[0]!)
   let cursor = 0
 
   return (
@@ -50,7 +55,8 @@ export function TimeBreakdown({ schedule, totalSeconds }: TimeBreakdownProps) {
       <svg
         className="chart"
         viewBox={`0 0 ${width} ${height}`}
-        height={height}
+        preserveAspectRatio="none"
+        style={{ height: 28 }}
         role="img"
         aria-label={`Step time breakdown: ${all
           .map((p) => `${p.label} ${((p.seconds / total) * 100).toFixed(0)}%`)
@@ -71,6 +77,13 @@ export function TimeBreakdown({ schedule, totalSeconds }: TimeBreakdownProps) {
           )
         })}
       </svg>
+
+      <p className="small muted" style={{ margin: '0.5rem 0 0' }}>
+        <b style={{ color: 'var(--ink)' }}>
+          {dominant.label} is {((dominant.seconds / total) * 100).toFixed(0)}%
+        </b>{' '}
+        of the step.
+      </p>
 
       {/* Identity is never colour alone: every segment is named, and the share
           is spelled out for anyone who cannot separate two hues. */}

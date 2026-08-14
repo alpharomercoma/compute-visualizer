@@ -66,10 +66,10 @@ function Sharding({ state, onChange, baseConfig, worldSize }: AdvancedProps) {
   }, [baseConfig, worldSize, state.phase])
 
   if (state.phase !== 'inference') {
-    return <p className="note">Sharding search runs on inference configurations.</p>
+    return <p className="small muted">Sharding search runs on inference configurations.</p>
   }
   if (ranked.length === 0) {
-    return <p className="note">No valid split of {worldSize} GPUs for this model.</p>
+    return <p className="small muted">No valid split of {worldSize} GPUs for this model.</p>
   }
 
   const best = ranked[0]!
@@ -77,7 +77,7 @@ function Sharding({ state, onChange, baseConfig, worldSize }: AdvancedProps) {
 
   return (
     <div>
-      <p className="note" style={{ marginBottom: 10 }}>
+      <p className="small muted" style={{ marginBottom: 10 }}>
         Every way to split {worldSize} GPUs, ranked by aggregate throughput. The search is
         exhaustive — there are only {ranked.length} of them.
       </p>
@@ -108,21 +108,30 @@ function Sharding({ state, onChange, baseConfig, worldSize }: AdvancedProps) {
               background: isCurrent ? 'rgba(255,255,255,0.06)' : 'transparent',
               border: 0,
               borderLeft: `2px solid ${isCurrent ? 'var(--accent)' : 'transparent'}`,
-              padding: '4px 6px',
+              padding: '0.625rem 0.75rem',
+              minHeight: 'var(--tap)',
+              borderRadius: '6px',
               font: 'inherit',
               color: 'inherit',
               cursor: 'pointer',
             }}
           >
-            <div className="metric" style={{ padding: 0 }}>
-              <dt style={{ color: candidate.feasible ? 'var(--ink-2)' : 'var(--ink-3)' }}>
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'baseline',
+                gap: '1rem',
+              }}
+            >
+              <span style={{ color: candidate.feasible ? 'var(--ink)' : 'var(--ink-2)' }}>
                 TP {candidate.tensor} · PP {candidate.pipeline} · DP {candidate.data}
-              </dt>
-              <dd style={{ fontSize: 'var(--t-small)' }}>
+              </span>
+              <span className="num" style={{ color: 'var(--ink-2)' }}>
                 {candidate.feasible
-                  ? `${Math.round(candidate.tokensPerSecond ?? 0).toLocaleString()} tok/s`
+                  ? `${Math.round(candidate.tokensPerSecond ?? 0).toLocaleString('en-US')} tok/s`
                   : 'will not fit'}
-              </dd>
+              </span>
             </div>
             {candidate.feasible && (
               <div
@@ -164,12 +173,12 @@ function Calibrate({
 
   return (
     <div>
-      <p className="note" style={{ marginBottom: 8 }}>
+      <p className="small muted" style={{ marginBottom: 8 }}>
         Every collective constant here is a fitted guess, not a vendor specification. Measure
         yours and paste the output:
       </p>
       <code
-        className="note"
+        className="small muted"
         style={{
           display: 'block',
           background: 'var(--surface-lift)',
@@ -214,7 +223,7 @@ function Calibrate({
               <span className="tag prior">not applied</span>
             )}
           </div>
-          <dl style={{ margin: 0 }}>
+          <dl className="rows">
             <Row label="Measurements" value={`${fit.measurements.length}`} />
             <Row label="Startup α" value={`${(fit.alpha * 1e6).toFixed(2)} µs`} />
             <Row label="algbw" value={`${(fit.algbw / 1e9).toFixed(0)} GB/s`} />
@@ -228,7 +237,7 @@ function Calibrate({
             />
           </dl>
           {delta && (
-            <p className="note" style={{ marginTop: 8 }}>
+            <p className="small muted" style={{ marginTop: 8 }}>
               Against the shipped prior: α is {delta.alphaRatio.toFixed(2)}× and bandwidth{' '}
               {delta.algbwRatio.toFixed(2)}×. If those are far from 1, every other number here
               deserves the same scepticism.
@@ -237,13 +246,13 @@ function Calibrate({
           <div className="row" style={{ marginTop: 10 }}>
             <button
               type="button"
-              className="apply"
+              className="ghost"
               onClick={() => onCalibrated?.([profileFromFit(fit)])}
             >
               Use these numbers
             </button>
             {calibrated && (
-              <button type="button" className="apply" onClick={() => onCalibrated?.(undefined)}>
+              <button type="button" className="ghost" onClick={() => onCalibrated?.(undefined)}>
                 Back to priors
               </button>
             )}
@@ -251,7 +260,7 @@ function Calibrate({
         </>
       ) : (
         text.trim() && (
-          <p className="note" style={{ marginTop: 8 }}>
+          <p className="small muted" style={{ marginTop: 8 }}>
             No measurements found. Expecting the standard table: size, count, type, redop, root,
             then time, algbw and busbw.
           </p>
@@ -263,9 +272,9 @@ function Calibrate({
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
-    <div className="metric">
+    <div className="row">
       <dt>{label}</dt>
-      <dd style={{ fontSize: 'var(--t-small)' }}>{value}</dd>
+      <dd>{value}</dd>
     </div>
   )
 }

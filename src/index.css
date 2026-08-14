@@ -1,348 +1,506 @@
 /*
- * An instrument, not a document.
+ * A document, not a heads-up display.
  *
- * Everything sits on a character grid: one monospace family throughout, sizes
- * chosen so columns of numbers line up without tables. The audience lives in
- * terminals and reads nvidia-smi; the typography is their vernacular rather than
- * a neutral delivery vehicle.
+ * The previous interface put five panels, 86 numbers and 27 controls on one
+ * screen, almost all of it 9-11px uppercase monospace at 3.86:1 contrast. Every
+ * element carried the same visual weight, so there was no entry point and no
+ * answer to "where do I look first". This replaces it with an ordinary grid of
+ * solid panels and a real type scale.
  *
- * Colour is reserved almost entirely for the diagnosis. The chassis is grey; the
- * only saturated hue on screen at any moment is the one naming what is throttling
- * the workload. That palette was validated for colour-vision deficiency against
- * this exact surface rather than picked by eye.
+ * Three rules, taken from measuring the reference site and broken nowhere:
+ *   1. UPPERCASE only on section labels. Never on values, prose or options.
+ *   2. Monospace only on numerals. Never on labels or prose.
+ *   3. Every text colour clears WCAG AA against its own surface, in BOTH
+ *      themes, computed rather than eyeballed.
  */
 
 :root {
-  color-scheme: dark;
+  /* --- Light, the default ------------------------------------------------ */
+  --page: #eef1f4;
+  --panel: #ffffff;
+  --panel-sunk: #f4f6f9;
 
-  --surface: #0c0e12;
-  --surface-lift: #12151b;
+  --ink: #11151b; /* 18.3:1 on panel */
+  --ink-2: #5f6875; /* 5.6:1 on panel, 5.0:1 on page */
 
-  /* Panels must stay legible over an arbitrarily bright 3D scene. Measured:
-     white text over 30% black on a bright chip is 3.6:1 and fails AA, so the
-     scrim carries the contrast and the blur is decoration. */
-  --panel: rgba(10, 12, 16, 0.86);
-  --panel-solid: #0e1116;
+  --divider: #e2e6ec; /* decorative only, no contrast duty */
+  --control-border: #868f9d; /* 3.3:1 — a real control boundary */
 
-  --ink: #e8ebf0;
-  --ink-2: #99a3b3;
-  --ink-3: #667081;
+  --shadow: 0 1px 2px rgba(17, 21, 27, 0.06), 0 4px 12px rgba(17, 21, 27, 0.05);
 
-  /* Decorative separators may be faint; anything that delimits a control has to
-     clear 3:1 as a graphical object. */
-  --rule: rgba(255, 255, 255, 0.09);
-  --rule-strong: rgba(255, 255, 255, 0.24);
-
-  /* Bottleneck classes. Fixed order, never cycled. All six pass the lightness
-     band, chroma floor, CVD separation and contrast checks on this surface. */
-  --c-compute: #be8628;
+  /* Bottleneck classes. Fixed order, never cycled. Validated for lightness
+     band, chroma floor, CVD separation and 3:1 contrast against BOTH surfaces,
+     so one palette serves both themes. */
+  --c-compute: #b07d24;
   --c-memory: #1b94ae;
   --c-net-bw: #8168de;
   --c-net-lat: #cc5490;
   --c-overhead: #4468be;
   --c-serial: #3e9a55;
 
-  /* Set per-render from the current diagnosis. */
   --accent: var(--c-memory);
 
-  --mono: ui-monospace, "SF Mono", SFMono-Regular, "Cascadia Mono", "Roboto Mono",
-    Menlo, Consolas, monospace;
+  --sans:
+    system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
 
-  --t-micro: 10px;
-  --t-small: 11px;
-  --t-body: 13px;
-  --t-data: 15px;
+  /* A scale that is actually a scale: 3.6:1 from hero to label, not 1.67:1. */
+  --t-hero: clamp(2rem, 1.4rem + 2.4vw, 2.75rem); /* 32 → 44px */
+  --t-figure: clamp(1.5rem, 1.2rem + 1.2vw, 1.875rem); /* 24 → 30px */
+  --t-lead: 1.0625rem; /* 17px */
+  --t-body: 0.9375rem; /* 15px */
+  --t-value: 0.9375rem; /* 15px, mono */
+  --t-label: 0.75rem; /* 12px — the floor for anything you must read */
+  --t-chart: 0.6875rem; /* 11px — charts only, never below */
 
-  --gap: 12px;
-  --radius: 3px;
+  --gap: 1rem;
+  --radius: 8px;
+  --tap: 44px;
+
+  /* Aliases kept for components not yet reworded. Every one of these resolved
+     to nothing after the token rename, which meant SVG strokes and inputs fell
+     back to browser defaults — invisible in dark mode. */
+  --surface: var(--page);
+  --surface-lift: var(--panel-sunk);
+  --rule: var(--divider);
+  --rule-strong: var(--control-border);
+  --t-micro: var(--t-label);
+  --t-small: var(--t-label);
+}
+
+:root[data-theme='dark'] {
+  --page: #0f1216;
+  --panel: #171b21;
+  --panel-sunk: #10141a;
+
+  --ink: #e9edf2; /* 14.7:1 on panel */
+  --ink-2: #a9b3c0; /* 8.1:1 on panel */
+
+  --divider: #262c35;
+  --control-border: #616b79; /* 3.2:1 */
+
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 14px rgba(0, 0, 0, 0.3);
 }
 
 * {
   box-sizing: border-box;
 }
 
-html,
-body,
-#root {
-  height: 100%;
-  margin: 0;
+html {
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
 }
 
 body {
-  background: var(--surface);
+  margin: 0;
+  background: var(--page);
   color: var(--ink);
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: var(--t-body);
-  line-height: 1.45;
-  overflow: hidden;
-  /* Numbers must not jitter as they update. */
-  font-variant-numeric: tabular-nums;
+  line-height: 1.55;
   -webkit-font-smoothing: antialiased;
 }
 
-/* --- The overlay -----------------------------------------------------------
- * The floating quality is not transparency. It is one full-viewport layer that
- * ignores the pointer, with only its panels taking it back, so the scene can be
- * orbited straight "through" the interface.
- */
-
-.stage {
-  position: fixed;
-  inset: 0;
+/* Numerals never reflow as they update. */
+.num {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
 }
 
-.overlay {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  display: grid;
-  grid-template-columns: 300px 1fr 330px;
-  grid-template-rows: auto 1fr auto;
-  gap: var(--gap);
-  padding: var(--gap);
+/* --- Shell ----------------------------------------------------------------
+ * An ordinary centred document. The page scrolls; nothing is fixed except the
+ * header, nothing is masked, and no panel hides its own overflow.
+ */
+
+.shell {
+  max-width: 68rem;
+  margin: 0 auto;
+  padding: 0 var(--gap) 4rem;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 0;
+  background: var(--page);
+  border-bottom: 1px solid var(--divider);
+}
+
+.topbar h1 {
+  font-size: var(--t-body);
+  font-weight: 600;
+  margin: 0;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.topbar .spacer {
+  flex: 1;
 }
 
 .panel {
-  pointer-events: auto;
   background: var(--panel);
-  backdrop-filter: blur(10px);
-  border: 1px solid var(--rule);
+  border: 1px solid var(--divider);
   border-radius: var(--radius);
-  padding: 12px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-  scrollbar-color: var(--rule-strong) transparent;
-  /* A panel taller than its column scrolls. Fading the last few pixels says so,
-     where a hard cut just looks like a rendering fault. */
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 20px), transparent 100%);
+  padding: 1.25rem;
+  box-shadow: var(--shadow);
 }
 
-.panel::-webkit-scrollbar {
-  width: 6px;
+/* --- Type ----------------------------------------------------------------- */
+
+.label {
+  display: block;
+  font-size: var(--t-label);
+  font-weight: 500;
+  color: var(--ink-2);
+  margin-bottom: 0.375rem;
 }
 
-.panel::-webkit-scrollbar-thumb {
-  background: var(--rule-strong);
-  border-radius: 3px;
+/* The ONLY place uppercase is allowed. */
+.eyebrow {
+  font-size: var(--t-label);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-2);
 }
 
-/* The short panels in the bottom row have nothing to fade. */
-.foot > .panel {
-  mask-image: none;
+h2 {
+  font-size: var(--t-lead);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0 0 0.75rem;
 }
 
-@media (prefers-reduced-transparency: reduce) {
-  .panel {
-    background: var(--panel-solid);
-    backdrop-filter: none;
+p {
+  margin: 0 0 0.75rem;
+  max-width: 62ch;
+}
+
+p:last-child {
+  margin-bottom: 0;
+}
+
+.muted {
+  color: var(--ink-2);
+}
+
+.small {
+  font-size: var(--t-label);
+  line-height: 1.6;
+}
+
+/* --- The verdict, which owns the page ------------------------------------- */
+
+.verdict {
+  display: grid;
+  gap: 1.25rem;
+  grid-template-columns: minmax(0, 1fr);
+  margin-bottom: var(--gap);
+  border-top: 4px solid var(--accent);
+}
+
+@media (min-width: 48rem) {
+  .verdict {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
   }
 }
 
-/* --- Type ------------------------------------------------------------------ */
-
-.label {
-  font-size: var(--t-micro);
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--ink-3);
-  display: block;
-  margin-bottom: 5px;
+.verdict h2 {
+  font-size: var(--t-hero);
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+  font-weight: 650;
+  margin: 0 0 0.5rem;
+  /* Ink, never the accent: the rule and the bar carry identity, and the
+     headline stays at full contrast whatever hue the diagnosis picks. */
+  color: var(--ink);
+  text-wrap: balance;
 }
 
-.section-head {
-  font-size: var(--t-micro);
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
+.verdict .cause {
+  font-size: var(--t-lead);
   color: var(--ink-2);
-  padding-bottom: 6px;
-  margin-bottom: 10px;
-  border-bottom: 1px solid var(--rule);
+  margin: 0 0 0.75rem;
 }
 
-.dim {
-  color: var(--ink-3);
+.verdict .lever {
+  font-size: var(--t-body);
+  margin: 0;
 }
 
-.unit {
-  color: var(--ink-3);
-  font-size: 0.78em;
-  margin-left: 2px;
+/* The number that proves the diagnosis. */
+.share {
+  text-align: left;
+  white-space: nowrap;
 }
 
-/* --- Controls -------------------------------------------------------------- */
+@media (min-width: 48rem) {
+  .share {
+    text-align: right;
+  }
+}
+
+.share b {
+  display: block;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--t-hero);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  color: var(--accent);
+}
+
+.share span {
+  display: block;
+  font-size: var(--t-label);
+  color: var(--ink-2);
+  margin-top: 0.25rem;
+}
+
+/* --- Figures --------------------------------------------------------------- */
+
+.figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: var(--gap);
+  margin-bottom: var(--gap);
+}
+
+.figure b {
+  display: block;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--t-figure);
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+.figure span {
+  display: block;
+  font-size: var(--t-label);
+  color: var(--ink-2);
+  margin-top: 0.25rem;
+}
+
+/* --- Disclosure ------------------------------------------------------------
+ * Named by the question it answers, with a preview proving there is something
+ * inside. A row of anonymous "Advanced" chevrons is just quieter overload.
+ */
+
+.disclosure {
+  border: 1px solid var(--divider);
+  border-radius: var(--radius);
+  background: var(--panel);
+  margin-bottom: 0.625rem;
+  box-shadow: var(--shadow);
+}
+
+.disclosure > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: var(--tap);
+  padding: 0.75rem 1.25rem;
+  cursor: pointer;
+  list-style: none;
+  border-radius: var(--radius);
+}
+
+.disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.disclosure > summary::after {
+  content: '';
+  width: 0.5rem;
+  height: 0.5rem;
+  margin-left: auto;
+  border-right: 2px solid var(--ink-2);
+  border-bottom: 2px solid var(--ink-2);
+  transform: rotate(45deg) translate(-2px, -2px);
+  transition: transform 0.15s ease;
+  flex: none;
+}
+
+.disclosure[open] > summary::after {
+  transform: rotate(-135deg) translate(-2px, -2px);
+}
+
+.disclosure > summary .title {
+  font-weight: 600;
+}
+
+.disclosure > summary .preview {
+  font-size: var(--t-label);
+  color: var(--ink-2);
+  margin-left: 0.25rem;
+}
+
+.disclosure .body {
+  padding: 0 1.25rem 1.25rem;
+  border-top: 1px solid var(--divider);
+  padding-top: 1rem;
+}
+
+/* --- Controls --------------------------------------------------------------
+ * Every target clears 44px. The previous build's largest was 39px and eleven
+ * were under 24px.
+ */
 
 .field {
-  margin-bottom: 12px;
+  margin-bottom: 1rem;
 }
 
-.field select,
-.field input[type='text'],
-.field input[type='number'] {
+select,
+input[type='text'],
+input[type='number'],
+textarea {
   width: 100%;
-  background: var(--surface-lift);
+  min-height: var(--tap);
+  background: var(--panel);
   color: var(--ink);
-  border: 1px solid var(--rule-strong);
-  border-radius: var(--radius);
-  padding: 5px 7px;
+  border: 1px solid var(--control-border);
+  border-radius: 6px;
+  padding: 0.5rem 0.625rem;
   font: inherit;
-  font-size: var(--t-small);
+  font-size: var(--t-body);
 }
 
-.field input[type='range'] {
+textarea {
+  min-height: 6rem;
+  font-family: var(--mono);
+  font-size: var(--t-label);
+  resize: vertical;
+}
+
+input[type='range'] {
   width: 100%;
+  height: var(--tap);
   accent-color: var(--accent);
 }
 
-select:focus-visible,
-input:focus-visible,
-button:focus-visible {
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+:where(select, input, button, summary, a):focus-visible {
   outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-
-.row {
-  display: flex;
-  gap: 6px;
-}
-
-.row > * {
-  flex: 1;
-  min-width: 0;
+  outline-offset: 2px;
 }
 
 .segmented {
-  display: flex;
-  border: 1px solid var(--rule-strong);
-  border-radius: var(--radius);
+  display: inline-flex;
+  border: 1px solid var(--control-border);
+  border-radius: 6px;
   overflow: hidden;
 }
 
 .segmented button {
-  flex: 1;
+  min-height: var(--tap);
+  padding: 0 1rem;
   background: transparent;
   color: var(--ink-2);
   border: 0;
-  border-right: 1px solid var(--rule);
-  padding: 4px 2px;
-  font: inherit;
-  font-size: var(--t-micro);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  cursor: pointer;
+  font-size: var(--t-body);
+  font-weight: 500;
 }
 
-.segmented button:last-child {
-  border-right: 0;
+.segmented button + button {
+  border-left: 1px solid var(--control-border);
 }
 
+/* Neutral, not the accent. White on the default teal is 3.56:1 and fails AA,
+   and the data palette should never leak into chrome anyway — a hue that means
+   "memory-bound" on a chart must not also mean "selected" on a button. */
 .segmented button[aria-pressed='true'] {
-  background: var(--accent);
-  color: #08090c;
+  background: var(--ink);
+  color: var(--panel);
+  font-weight: 600;
 }
 
-/* --- Readouts -------------------------------------------------------------- */
+.ghost {
+  min-height: var(--tap);
+  padding: 0 0.875rem;
+  background: var(--panel);
+  color: var(--ink);
+  border: 1px solid var(--control-border);
+  border-radius: 6px;
+  font-size: var(--t-body);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
 
-.metric {
+.ghost:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* --- Rows ------------------------------------------------------------------ */
+
+.rows {
+  margin: 0;
+  display: grid;
+  gap: 0.125rem;
+}
+
+.row {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  gap: 8px;
-  padding: 3px 0;
+  gap: 1rem;
+  padding: 0.375rem 0;
+  border-bottom: 1px solid var(--divider);
 }
 
-.metric dt {
-  font-size: var(--t-micro);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--ink-3);
-  white-space: nowrap;
+.row:last-child {
+  border-bottom: 0;
 }
 
-.metric dd {
-  margin: 0;
-  font-size: var(--t-data);
-  white-space: nowrap;
-}
-
-/* --- The verdict, which is the whole point --------------------------------- */
-
-.verdict {
-  border-left: 3px solid var(--accent);
-  padding-left: 10px;
-  margin-bottom: 12px;
-}
-
-.verdict h2 {
-  font-size: clamp(15px, 1.5vw, 19px);
-  letter-spacing: 0.02em;
-  margin: 0 0 4px;
-  font-weight: 600;
-  /* Ink, not the accent: the coloured rule and the bar carry identity, and text
-     stays at full contrast whatever hue the diagnosis picks. */
-  color: var(--ink);
-}
-
-.verdict p {
-  margin: 0;
-  font-size: var(--t-small);
+.row dt {
+  font-size: var(--t-label);
   color: var(--ink-2);
-  line-height: 1.5;
 }
 
-.infeasible {
-  --accent: #cc5490;
-}
-
-/* --- Provenance ------------------------------------------------------------
- * Vendor specifications and fitted priors must never look alike.
- */
-
-.tag {
-  font-size: 9px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  padding: 1px 4px;
-  border-radius: 2px;
-  border: 1px solid var(--rule-strong);
-  color: var(--ink-3);
+.row dd {
+  margin: 0;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--t-value);
   white-space: nowrap;
-}
-
-.tag.prior {
-  border-color: rgba(204, 84, 144, 0.5);
-  color: #d98cb4;
-}
-
-.tag.calibrated {
-  border-color: rgba(62, 154, 85, 0.6);
-  color: #6dbd82;
 }
 
 /* --- Charts ---------------------------------------------------------------- */
 
 .chart {
-  width: 100%;
   display: block;
+  width: 100%;
   overflow: visible;
 }
 
+/* 11px floor, and never the faint ink. The old build rendered 9px chart text at
+   3.86:1, which became 3.26px on a phone. */
 .chart text {
-  font-family: var(--mono);
-  fill: var(--ink-3);
-  font-size: 9px;
-  letter-spacing: 0.08em;
-}
-
-.chart .axis-title {
+  font-family: var(--sans);
+  font-size: var(--t-chart);
   fill: var(--ink-2);
-  font-size: 9px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
 }
 
 .chart .grid {
-  stroke: rgba(255, 255, 255, 0.06);
+  stroke: var(--divider);
   stroke-width: 1;
 }
 
@@ -353,156 +511,74 @@ button:focus-visible {
 }
 
 .chart .roof-derated {
-  stroke: var(--ink-3);
+  stroke: var(--ink-2);
   stroke-width: 1.5;
-  stroke-dasharray: 3 3;
+  stroke-dasharray: 4 3;
   fill: none;
-}
-
-.foot {
-  grid-column: 1 / -1;
-  display: flex;
-  gap: var(--gap);
-  align-items: stretch;
-}
-
-.foot > .panel {
-  overflow: visible;
-}
-
-.masthead {
-  grid-column: 1 / -1;
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  pointer-events: none;
-}
-
-.masthead h1 {
-  font-size: var(--t-body);
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  margin: 0;
-  font-weight: 600;
-}
-
-.masthead .sub {
-  font-size: var(--t-micro);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--ink-3);
-}
-
-.masthead a {
-  pointer-events: auto;
-  color: var(--ink-3);
-  font-size: var(--t-micro);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  text-decoration: none;
-  border-bottom: 1px solid var(--rule);
-}
-
-.masthead a:hover {
-  color: var(--ink);
 }
 
 .legend {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 12px;
-  margin-top: 8px;
+  gap: 0.375rem 1rem;
+  margin-top: 0.75rem;
 }
 
 .legend span {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font-size: var(--t-micro);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--ink-3);
+  gap: 0.4375rem;
+  font-size: var(--t-label);
+  color: var(--ink-2);
 }
 
 .legend i {
-  width: 8px;
-  height: 8px;
-  border-radius: 1px;
+  width: 0.625rem;
+  height: 0.625rem;
+  border-radius: 2px;
+  flex: none;
+}
+
+/* --- Provenance ------------------------------------------------------------ */
+
+.tag {
   display: inline-block;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.125rem 0.375rem;
+  border-radius: 4px;
+  border: 1px solid var(--control-border);
+  color: var(--ink-2);
 }
 
-.note {
-  font-size: var(--t-micro);
-  line-height: 1.6;
-  color: var(--ink-3);
-  letter-spacing: 0.02em;
+.tag.calibrated {
+  border-color: var(--c-serial);
+  color: var(--c-serial);
 }
 
-/* The centre column floats its panel at the bottom, over the board. */
-.centre-column {
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  pointer-events: none;
-  min-height: 0;
-}
-
-.centre-column > div {
-  width: 290px;
-  max-height: 100%;
-  display: flex;
-}
-
-/*
- * Narrow: the overlay stops being an overlay.
- *
- * Floating panels over a scene only work when there is room beside the scene.
- * Below this width they become an ordinary scrolling column, the scene drops to
- * a band behind the masthead, and nothing is clipped — a panel cut off mid-word
- * reads as a broken page, not as a scrollable one.
+/* --- Scenario summary ------------------------------------------------------
+ * A sentence, not twenty inputs. Showing the full configuration first tells the
+ * user they must understand it before the tool will answer them.
  */
-@media (max-width: 1180px) {
-  html,
-  body {
-    height: auto;
-    overflow: auto;
-  }
 
-  .stage {
-    position: fixed;
-    inset: 0 0 auto 0;
-    height: 40vh;
-    opacity: 0.5;
-  }
+.scenario {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin-bottom: var(--gap);
+}
 
-  .overlay {
-    position: relative;
-    inset: auto;
-    grid-template-columns: 1fr;
-    grid-template-rows: none;
-    grid-auto-rows: min-content;
-    pointer-events: auto;
-    padding-top: 26vh;
-  }
+.scenario .summary {
+  font-size: var(--t-body);
+  color: var(--ink-2);
+}
 
-  /* Full height, no scroll container, no fade: the page scrolls instead. */
-  .panel {
-    overflow: visible;
-    max-height: none;
-    mask-image: none;
-  }
-
-  .foot {
-    flex-direction: column;
-  }
-
-  /* The centre column's bottom-alignment is meaningless in a single column. */
-  .centre-column,
-  .centre-column > div {
-    display: block;
-    width: auto;
-    max-height: none;
-  }
+.scenario .summary b {
+  color: var(--ink);
+  font-weight: 600;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -511,24 +587,137 @@ button:focus-visible {
   *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
 
-/* An action that changes the model's constants should look like a commitment. */
-button.apply {
-  background: var(--surface-lift);
+/* --- The settings sheet ----------------------------------------------------
+ * A native <dialog>: focus trapping, Escape, and inert background come free.
+ * On a phone it sits at the bottom, where a thumb reaches; on a desktop it is
+ * a centred panel.
+ */
+
+.sheet {
+  border: 1px solid var(--divider);
+  background: var(--panel);
   color: var(--ink);
-  border: 1px solid var(--rule-strong);
+  padding: 0;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.28);
+  width: min(30rem, 100%);
+  max-height: 88vh;
   border-radius: var(--radius);
-  padding: 5px 8px;
-  font: inherit;
-  font-size: var(--t-micro);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  cursor: pointer;
 }
 
-button.apply:hover {
-  border-color: var(--accent);
+.sheet::backdrop {
+  background: rgba(10, 14, 20, 0.45);
+  backdrop-filter: blur(2px);
+}
+
+.sheet-head {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  background: var(--panel);
+  border-bottom: 1px solid var(--divider);
+}
+
+.sheet-body {
+  padding: 1.25rem;
+  overflow-y: auto;
+  max-height: calc(88vh - 4.5rem);
+}
+
+@media (max-width: 40rem) {
+  .sheet {
+    margin: 0 0 0 0;
+    position: fixed;
+    inset: auto 0 0 0;
+    width: 100%;
+    max-width: none;
+    max-height: 90vh;
+    border-radius: var(--radius) var(--radius) 0 0;
+    border-bottom: 0;
+  }
+
+  .sheet-body {
+    max-height: calc(90vh - 4.5rem);
+    padding-bottom: max(1.25rem, env(safe-area-inset-bottom));
+  }
+}
+
+/* --- Narrow --------------------------------------------------------------- */
+
+@media (max-width: 40rem) {
+  .shell {
+    padding: 0 0.75rem 3rem;
+  }
+
+  .panel {
+    padding: 1rem;
+  }
+
+  /* Title and chevron stay on one line; the preview wraps beneath them, so the
+     affordance never drifts away from the thing it opens. */
+  .disclosure > summary {
+    padding: 0.75rem 1rem;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0.125rem 0.75rem;
+    align-items: center;
+  }
+
+  .disclosure > summary .preview {
+    grid-column: 1 / -1;
+    margin-left: 0;
+  }
+
+  .disclosure > summary::after {
+    grid-row: 1;
+    grid-column: 2;
+    margin-left: 0;
+  }
+
+  .disclosure .body {
+    padding: 1rem 1rem 1rem;
+  }
+
+  .scenario {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .scenario .ghost {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+a {
+  color: inherit;
+  text-underline-offset: 3px;
+}
+
+/* Footer links were 14px tall — a real target, not a hairline. */
+footer a {
+  display: inline-block;
+  padding: 0.625rem 0;
+  min-height: var(--tap);
+  line-height: 1.5rem;
+}
+
+a:hover {
   color: var(--accent);
+}
+
+code {
+  font-family: var(--mono);
+  /* Never below the 11px floor: 0.9em of a 12px parent computed to 10.8. */
+  font-size: max(0.9em, 11px);
+  background: var(--panel-sunk);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
 }
