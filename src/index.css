@@ -1,0 +1,469 @@
+/*
+ * An instrument, not a document.
+ *
+ * Everything sits on a character grid: one monospace family throughout, sizes
+ * chosen so columns of numbers line up without tables. The audience lives in
+ * terminals and reads nvidia-smi; the typography is their vernacular rather than
+ * a neutral delivery vehicle.
+ *
+ * Colour is reserved almost entirely for the diagnosis. The chassis is grey; the
+ * only saturated hue on screen at any moment is the one naming what is throttling
+ * the workload. That palette was validated for colour-vision deficiency against
+ * this exact surface rather than picked by eye.
+ */
+
+:root {
+  color-scheme: dark;
+
+  --surface: #0c0e12;
+  --surface-lift: #12151b;
+
+  /* Panels must stay legible over an arbitrarily bright 3D scene. Measured:
+     white text over 30% black on a bright chip is 3.6:1 and fails AA, so the
+     scrim carries the contrast and the blur is decoration. */
+  --panel: rgba(10, 12, 16, 0.86);
+  --panel-solid: #0e1116;
+
+  --ink: #e8ebf0;
+  --ink-2: #99a3b3;
+  --ink-3: #667081;
+
+  /* Decorative separators may be faint; anything that delimits a control has to
+     clear 3:1 as a graphical object. */
+  --rule: rgba(255, 255, 255, 0.09);
+  --rule-strong: rgba(255, 255, 255, 0.24);
+
+  /* Bottleneck classes. Fixed order, never cycled. All six pass the lightness
+     band, chroma floor, CVD separation and contrast checks on this surface. */
+  --c-compute: #be8628;
+  --c-memory: #1b94ae;
+  --c-net-bw: #8168de;
+  --c-net-lat: #cc5490;
+  --c-overhead: #4468be;
+  --c-serial: #3e9a55;
+
+  /* Set per-render from the current diagnosis. */
+  --accent: var(--c-memory);
+
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "Cascadia Mono", "Roboto Mono",
+    Menlo, Consolas, monospace;
+
+  --t-micro: 10px;
+  --t-small: 11px;
+  --t-body: 13px;
+  --t-data: 15px;
+
+  --gap: 12px;
+  --radius: 3px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: var(--t-body);
+  line-height: 1.45;
+  overflow: hidden;
+  /* Numbers must not jitter as they update. */
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* --- The overlay -----------------------------------------------------------
+ * The floating quality is not transparency. It is one full-viewport layer that
+ * ignores the pointer, with only its panels taking it back, so the scene can be
+ * orbited straight "through" the interface.
+ */
+
+.stage {
+  position: fixed;
+  inset: 0;
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  display: grid;
+  grid-template-columns: 300px 1fr 330px;
+  grid-template-rows: auto 1fr auto;
+  gap: var(--gap);
+  padding: var(--gap);
+}
+
+.panel {
+  pointer-events: auto;
+  background: var(--panel);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: 12px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--rule-strong) transparent;
+  /* A panel taller than its column scrolls. Fading the last few pixels says so,
+     where a hard cut just looks like a rendering fault. */
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 20px), transparent 100%);
+}
+
+.panel::-webkit-scrollbar {
+  width: 6px;
+}
+
+.panel::-webkit-scrollbar-thumb {
+  background: var(--rule-strong);
+  border-radius: 3px;
+}
+
+/* The short panels in the bottom row have nothing to fade. */
+.foot > .panel {
+  mask-image: none;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .panel {
+    background: var(--panel-solid);
+    backdrop-filter: none;
+  }
+}
+
+/* --- Type ------------------------------------------------------------------ */
+
+.label {
+  font-size: var(--t-micro);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  display: block;
+  margin-bottom: 5px;
+}
+
+.section-head {
+  font-size: var(--t-micro);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  padding-bottom: 6px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.dim {
+  color: var(--ink-3);
+}
+
+.unit {
+  color: var(--ink-3);
+  font-size: 0.78em;
+  margin-left: 2px;
+}
+
+/* --- Controls -------------------------------------------------------------- */
+
+.field {
+  margin-bottom: 12px;
+}
+
+.field select,
+.field input[type='text'],
+.field input[type='number'] {
+  width: 100%;
+  background: var(--surface-lift);
+  color: var(--ink);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  padding: 5px 7px;
+  font: inherit;
+  font-size: var(--t-small);
+}
+
+.field input[type='range'] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+select:focus-visible,
+input:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.row {
+  display: flex;
+  gap: 6px;
+}
+
+.row > * {
+  flex: 1;
+  min-width: 0;
+}
+
+.segmented {
+  display: flex;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.segmented button {
+  flex: 1;
+  background: transparent;
+  color: var(--ink-2);
+  border: 0;
+  border-right: 1px solid var(--rule);
+  padding: 4px 2px;
+  font: inherit;
+  font-size: var(--t-micro);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.segmented button:last-child {
+  border-right: 0;
+}
+
+.segmented button[aria-pressed='true'] {
+  background: var(--accent);
+  color: #08090c;
+}
+
+/* --- Readouts -------------------------------------------------------------- */
+
+.metric {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 0;
+}
+
+.metric dt {
+  font-size: var(--t-micro);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.metric dd {
+  margin: 0;
+  font-size: var(--t-data);
+  white-space: nowrap;
+}
+
+/* --- The verdict, which is the whole point --------------------------------- */
+
+.verdict {
+  border-left: 3px solid var(--accent);
+  padding-left: 10px;
+  margin-bottom: 12px;
+}
+
+.verdict h2 {
+  font-size: clamp(15px, 1.5vw, 19px);
+  letter-spacing: 0.02em;
+  margin: 0 0 4px;
+  font-weight: 600;
+  /* Ink, not the accent: the coloured rule and the bar carry identity, and text
+     stays at full contrast whatever hue the diagnosis picks. */
+  color: var(--ink);
+}
+
+.verdict p {
+  margin: 0;
+  font-size: var(--t-small);
+  color: var(--ink-2);
+  line-height: 1.5;
+}
+
+.infeasible {
+  --accent: #cc5490;
+}
+
+/* --- Provenance ------------------------------------------------------------
+ * Vendor specifications and fitted priors must never look alike.
+ */
+
+.tag {
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 1px 4px;
+  border-radius: 2px;
+  border: 1px solid var(--rule-strong);
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.tag.prior {
+  border-color: rgba(204, 84, 144, 0.5);
+  color: #d98cb4;
+}
+
+.tag.calibrated {
+  border-color: rgba(62, 154, 85, 0.6);
+  color: #6dbd82;
+}
+
+/* --- Charts ---------------------------------------------------------------- */
+
+.chart {
+  width: 100%;
+  display: block;
+  overflow: visible;
+}
+
+.chart text {
+  font-family: var(--mono);
+  fill: var(--ink-3);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+}
+
+.chart .axis-title {
+  fill: var(--ink-2);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.chart .grid {
+  stroke: rgba(255, 255, 255, 0.06);
+  stroke-width: 1;
+}
+
+.chart .roof {
+  stroke: var(--ink-2);
+  stroke-width: 2;
+  fill: none;
+}
+
+.chart .roof-derated {
+  stroke: var(--ink-3);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 3;
+  fill: none;
+}
+
+.foot {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: var(--gap);
+  align-items: stretch;
+}
+
+.foot > .panel {
+  overflow: visible;
+}
+
+.masthead {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.masthead h1 {
+  font-size: var(--t-body);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  margin: 0;
+  font-weight: 600;
+}
+
+.masthead .sub {
+  font-size: var(--t-micro);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.masthead a {
+  pointer-events: auto;
+  color: var(--ink-3);
+  font-size: var(--t-micro);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-decoration: none;
+  border-bottom: 1px solid var(--rule);
+}
+
+.masthead a:hover {
+  color: var(--ink);
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 8px;
+}
+
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--t-micro);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.legend i {
+  width: 8px;
+  height: 8px;
+  border-radius: 1px;
+  display: inline-block;
+}
+
+.note {
+  font-size: var(--t-micro);
+  line-height: 1.6;
+  color: var(--ink-3);
+  letter-spacing: 0.02em;
+}
+
+@media (max-width: 1180px) {
+  .overlay {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto auto;
+    overflow-y: auto;
+    pointer-events: auto;
+  }
+
+  .foot {
+    flex-direction: column;
+  }
+
+  body {
+    overflow: auto;
+  }
+
+  .panel {
+    max-height: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

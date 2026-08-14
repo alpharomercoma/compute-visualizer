@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>Compute Visualizer — what is throttling this LLM workload</title>
+    <meta
+      name="description"
+      content="Roofline and bottleneck analysis for LLM training and inference on NVIDIA H100. Names whether a workload is compute-, memory-bandwidth-, network-bandwidth-, network-latency- or dependency-bound, and what would help."
+    />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230c0e12'/%3E%3Cpath d='M4 24 L18 10 L28 10' stroke='%231b94ae' stroke-width='3' fill='none'/%3E%3C/svg%3E"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>
+      This is a calculator; it needs JavaScript. The model it implements is written up at
+      https://github.com/alpharomercoma/compute-visualizer/blob/main/docs/MODEL.md
+    </noscript>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
