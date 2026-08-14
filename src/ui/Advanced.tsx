@@ -2,8 +2,8 @@ import { useMemo, useState } from 'react'
 import type { AppState } from '../app/state'
 import type { InferenceConfig } from '../core/inference'
 import { rankSharding } from '../core/search'
-import { fitCollective, parseNcclTests, compareToPrior } from '../core/calibration'
-import { defaultProfiles } from '../core/collectives'
+import { fitCollective, parseNcclTests, compareToPrior, profileFromFit } from '../core/calibration'
+import { type CollectiveProfile, defaultProfiles } from '../core/collectives'
 import { KiB, MiB } from '../core/units'
 
 /**
@@ -16,9 +16,19 @@ export interface AdvancedProps {
   readonly onChange: (next: AppState) => void
   readonly baseConfig: InferenceConfig | undefined
   readonly worldSize: number
+  /** Publishes a measured collective profile, replacing the shipped priors. */
+  readonly onCalibrated?: (profiles: readonly CollectiveProfile[] | undefined) => void
+  readonly calibrated?: boolean
 }
 
-export function Advanced({ state, onChange, baseConfig, worldSize }: AdvancedProps) {
+export function Advanced({
+  state,
+  onChange,
+  baseConfig,
+  worldSize,
+  onCalibrated,
+  calibrated,
+}: AdvancedProps) {
   const [tab, setTab] = useState<'sharding' | 'calibrate'>('sharding')
 
   return (
@@ -26,7 +36,7 @@ export function Advanced({ state, onChange, baseConfig, worldSize }: AdvancedPro
       <div className="segmented" style={{ marginBottom: 12 }}>
         {(['sharding', 'calibrate'] as const).map((key) => (
           <button key={key} type="button" aria-pressed={tab === key} onClick={() => setTab(key)}>
-            {key === 'sharding' ? 'Best split' : 'Calibrate'}
+            {key === 'sharding' ? 'Best split' : calibrated ? 'Calibrated' : 'Calibrate'}
           </button>
         ))}
       </div>
@@ -39,7 +49,11 @@ export function Advanced({ state, onChange, baseConfig, worldSize }: AdvancedPro
           worldSize={worldSize}
         />
       ) : (
-        <Calibrate worldSize={worldSize} />
+        <Calibrate
+          worldSize={worldSize}
+          {...(onCalibrated ? { onCalibrated } : {})}
+          {...(calibrated !== undefined ? { calibrated } : {})}
+        />
       )}
     </section>
   )
@@ -128,7 +142,15 @@ function Sharding({ state, onChange, baseConfig, worldSize }: AdvancedProps) {
   )
 }
 
-function Calibrate({ worldSize }: { worldSize: number }) {
+function Calibrate({
+  worldSize,
+  onCalibrated,
+  calibrated,
+}: {
+  worldSize: number
+  onCalibrated?: (profiles: readonly CollectiveProfile[] | undefined) => void
+  calibrated?: boolean
+}) {
   const [text, setText] = useState('')
 
   const fit = useMemo(() => {
@@ -185,7 +207,12 @@ function Calibrate({ worldSize }: { worldSize: number }) {
       {fit ? (
         <>
           <div className="section-head" style={{ marginTop: 12 }}>
-            Fitted <span className="tag calibrated">calibrated</span>
+            Fitted{' '}
+            {calibrated ? (
+              <span className="tag calibrated">in use</span>
+            ) : (
+              <span className="tag prior">not applied</span>
+            )}
           </div>
           <dl style={{ margin: 0 }}>
             <Row label="Measurements" value={`${fit.measurements.length}`} />
@@ -207,6 +234,20 @@ function Calibrate({ worldSize }: { worldSize: number }) {
               deserves the same scepticism.
             </p>
           )}
+          <div className="row" style={{ marginTop: 10 }}>
+            <button
+              type="button"
+              className="apply"
+              onClick={() => onCalibrated?.([profileFromFit(fit)])}
+            >
+              Use these numbers
+            </button>
+            {calibrated && (
+              <button type="button" className="apply" onClick={() => onCalibrated?.(undefined)}>
+                Back to priors
+              </button>
+            )}
+          </div>
         </>
       ) : (
         text.trim() && (

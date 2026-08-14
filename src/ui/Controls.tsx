@@ -2,6 +2,8 @@ import type { AppState } from '../app/state'
 import { shardingOptions } from '../app/state'
 import type { Topology } from '../core/hardware'
 import type { Preset } from '../data/presets'
+import type { ResolvedModel } from '../hub/useHubModel'
+import { ModelPicker } from './ModelPicker'
 
 /**
  * The inputs.
@@ -17,9 +19,20 @@ export interface ControlsProps {
   readonly onChange: (next: AppState) => void
   readonly topology: Topology
   readonly presets: readonly Preset[]
+  readonly resolved: ResolvedModel | undefined
+  readonly modelLoading: boolean
+  readonly modelError: string | undefined
 }
 
-export function Controls({ state, onChange, topology, presets }: ControlsProps) {
+export function Controls({
+  state,
+  onChange,
+  topology,
+  presets,
+  resolved,
+  modelLoading,
+  modelError,
+}: ControlsProps) {
   const set = <K extends keyof AppState>(key: K, value: AppState[K]) =>
     onChange({ ...state, [key]: value })
 
@@ -44,27 +57,18 @@ export function Controls({ state, onChange, topology, presets }: ControlsProps) 
       </div>
 
       <div className="section-head">Model</div>
-      <div className="field">
-        <label className="label" htmlFor="model">
-          Hugging Face repository
-        </label>
-        <select id="model" value={state.modelId} onChange={(e) => set('modelId', e.target.value)}>
-          {Object.entries(groupBy(presets, (p) => p.family)).map(([family, group]) => (
-            <optgroup key={family} label={family}>
-              {group.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.label}
-                </option>
-              ))}
-            </optgroup>
-          ))}
-        </select>
-        {preset?.note && (
-          <p className="note" style={{ marginTop: 6 }}>
-            {preset.note}
-          </p>
-        )}
-      </div>
+      <ModelPicker
+        modelId={state.modelId}
+        onChange={(repo) => set('modelId', repo)}
+        resolved={resolved}
+        loading={modelLoading}
+        error={modelError}
+      />
+      {preset?.note && (
+        <p className="note" style={{ marginTop: -4, marginBottom: 12 }}>
+          {preset.note}
+        </p>
+      )}
 
       <div className="section-head">Hardware</div>
       <div className="field">
@@ -394,11 +398,3 @@ function powersOfTwo(max: number): number[] {
   return out
 }
 
-function groupBy<T>(items: readonly T[], key: (item: T) => string): Record<string, T[]> {
-  const out: Record<string, T[]> = {}
-  for (const item of items) {
-    const k = key(item)
-    ;(out[k] ??= []).push(item)
-  }
-  return out
-}

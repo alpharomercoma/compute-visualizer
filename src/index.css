@@ -513,3 +513,22 @@ button:focus-visible {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* An action that changes the model's constants should look like a commitment. */
+button.apply {
+  background: var(--surface-lift);
+  color: var(--ink);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  padding: 5px 8px;
+  font: inherit;
+  font-size: var(--t-micro);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+button.apply:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}

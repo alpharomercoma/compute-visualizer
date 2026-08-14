@@ -1,6 +1,8 @@
 import { Suspense, lazy, useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { type AppState, readStateFromLocation, writeStateToLocation } from './app/state'
-import { PRESETS, presetById } from './data/presets'
+import { PRESETS } from './data/presets'
+import { useHubModel } from './hub/useHubModel'
+import type { CollectiveProfile } from './core/collectives'
 import {
   DGX_H100,
   DTYPE_BYTES,
@@ -9,7 +11,6 @@ import {
   ridgePoint,
 } from './core/hardware'
 import { H100_EFFICIENCY, H100_OVERHEAD, IDEAL_EFFICIENCY } from './core/efficiency'
-import { fromHuggingFaceConfig } from './core/modelspec'
 import { type InferenceConfig, analyseInference, computeBoundBatch } from './core/inference'
 import { analyseTraining } from './core/training'
 import type { BottleneckClass } from './core/schedule'
@@ -60,15 +61,18 @@ export default function App() {
   const topology = TOPOLOGIES[state.topologyId] ?? DGX_H100
   const efficiency = state.showTheoretical ? IDEAL_EFFICIENCY : H100_EFFICIENCY
 
-  const spec = useMemo(() => {
-    const preset = presetById(state.modelId)
-    if (!preset) return undefined
-    try {
-      return fromHuggingFaceConfig(preset.config, { id: preset.id, name: preset.label })
-    } catch {
-      return undefined
-    }
-  }, [state.modelId])
+  // Presets resolve instantly and offline; anything else is read from the Hub.
+  const hub = useHubModel(state.modelId)
+  const spec = hub.model?.spec
+
+  /**
+   * Collective constants measured on the user's own machine.
+   *
+   * Until this is set, every collective figure in the tool is a fitted prior.
+   * Threading it through both analyses is the whole point of the calibration
+   * panel: a measurement that does not change the answer would be theatre.
+   */
+  const [calibrated, setCalibrated] = useState<readonly CollectiveProfile[]>()
 
   const parallelism = {
     tensor: state.tensorParallel,
@@ -98,10 +102,11 @@ export default function App() {
             overhead: H100_OVERHEAD,
             cudaGraph: state.cudaGraph,
             flashAttention: state.flashAttention,
+            ...(calibrated ? { collectiveProfiles: calibrated } : {}),
           } satisfies InferenceConfig)
         : undefined,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [spec, topology, state, efficiency],
+    [spec, topology, state, efficiency, calibrated],
   )
 
   const inference = useMemo(() => {
@@ -127,9 +132,10 @@ export default function App() {
       fullRecompute: state.recompute === 'full',
       efficiency,
       overhead: H100_OVERHEAD,
+      ...(calibrated ? { collectiveProfiles: calibrated } : {}),
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [spec, topology, state, efficiency])
+  }, [spec, topology, state, efficiency, calibrated])
 
   const isInference = state.phase === 'inference'
   const capacity = isInference ? inference?.capacity : training?.capacity
@@ -218,7 +224,15 @@ export default function App() {
           </a>
         </header>
 
-        <Controls state={state} onChange={setState} topology={topology} presets={PRESETS} />
+        <Controls
+          state={state}
+          onChange={setState}
+          topology={topology}
+          presets={PRESETS}
+          resolved={hub.model}
+          modelLoading={hub.loading}
+          modelError={hub.error}
+        />
 
         {/* Bottom-aligned and narrow, so the board stays visible around it.
             Panels scattered over the scene rather than a wall of chrome. */}
@@ -230,6 +244,8 @@ export default function App() {
                 onChange={setState}
                 baseConfig={inferenceConfig}
                 worldSize={topology.gpus}
+                onCalibrated={setCalibrated}
+                calibrated={calibrated !== undefined}
               />
             )}
           </div>
