@@ -81,7 +81,9 @@ Two independent models — OpenAI's `codex` and Google's `agy` — reviewed the 
 specification before any code existed, then the implementation, then recomputed the reference
 scenarios from scratch. Disagreements were settled by explicit arithmetic, not by majority.
 
-It caught real errors, including in its own reviewers:
+The spec was reviewed before any code existed, then the implementation against the spec. It
+caught real errors at both gates — including in its own reviewers, and including two in code that
+was already green and looked right:
 
 - A reviewer's reference table put per-GPU decode KV traffic at 21.47 GB. Two independent
   calculations gave **2.68 GB** — it had quoted the cluster-wide figure as per-GPU. An 8×
@@ -95,6 +97,13 @@ It caught real errors, including in its own reviewers:
   that decides whether a run OOMs.
 - Korthikanti et al. Eq. (8) is arithmetically inconsistent with its own derivation: it
   prints `s/(3h)` where the `+4Bs²h` per layer it just described gives `2s/(9h)`.
+- **Selective activation recomputation was implemented as a blanket 1.1× across every kernel** —
+  an invented constant, wrong at every `s/h`, sitting inside the project that refuses invented
+  constants everywhere else. Replacing it with the attention-only term the paper specifies moved
+  training MFU from 36.3% to 41.8% and put HFU/MFU at 1.066 against the 1.056 the corrected
+  formula predicts. A fix that agrees with theory better than before is a correction, not a change.
+- **Data-parallel gradient overlap was asserted in a comment while the dependency edge made it
+  impossible**, then charged once per microbatch instead of once per optimizer step.
 
 One reviewer finding was **rejected**: it flagged "NVSwitch gen3" as an Ampere-era error. The
 Hopper whitepaper states fourth-generation NVLink over *third*-generation NVSwitch.
@@ -130,11 +139,36 @@ specification**, and is labelled as such in the interface. No credible published
 NVLS state needed to fit one, and none was invented. The calibration command is documented in
 `docs/MODEL.md` so anyone with the hardware can replace them.
 
+## Any model on the Hub
+
+Search Hugging Face from the tool and it reads `config.json` directly — no proxy, no server, no
+API key. Gated repositories fall back to an ungated mirror and the interface names the
+substitution rather than quietly costing a different model. A bundled catalog covers the common
+cases instantly and offline.
+
+The parsing is where the traps are, and they are silent ones: `head_dim` is sometimes present and
+*not* equal to `hidden/heads` (Qwen3-30B-A3B declares 128 where the derivation gives 64 — a 2× KV
+error); the expert count is spelled `num_local_experts`, `num_experts` or `n_routed_experts`
+depending on the family; and DeepSeek's MLA caches a low-rank latent rather than K and V, so the
+standard formula overstates it by ~57×. Each is handled explicitly and guarded by a test.
+
+## Replacing our guesses with your measurements
+
+Every collective constant here is a fitted prior. Paste `all_reduce_perf` output from your own
+machine and the tool refits α and the bandwidth term, shows how far off the shipped defaults were,
+and feeds the result into every subsequent number:
+
+```sh
+./build/all_reduce_perf -b 1K -e 1G -f 2 -g 8 -n 100
+```
+
+If the fit says our α was 2× out, that is worth knowing about every other figure on the page.
+
 ## Build
 
 ```sh
 npm install
-npm test        # 84 tests, including the golden scenarios
+npm test        # 96 tests, including the golden scenarios
 npm run dev
 npm run build
 ```
