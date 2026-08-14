@@ -1,6 +1,6 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { AppState } from '../app/state'
-import { shardingOptions } from '../app/state'
+import { normalise, shardingOptions } from '../app/state'
 import type { Topology } from '../core/hardware'
 import { PRESETS } from '../data/presets'
 import type { ResolvedModel } from '../hub/useHubModel'
@@ -35,7 +35,11 @@ export function ScenarioBar({ state, topology, resolved, onEdit }: ScenarioProps
         <b>{name}</b> on <b>{gpus} × {topology.accelerator.name.replace(/ \d+GB$/, '')}</b>
         {state.phase === 'inference' ? (
           <>
-            , batch <b>{state.batch}</b>, <b>{compact(state.promptLength)}</b> context
+            {/* The generated length is in the summary because it is in the KV
+                cache: a 2k prompt with 4k of output was described as "2k
+                context" while occupying three times that. */}
+            , batch <b>{state.batch}</b>, <b>{compact(state.promptLength)}</b> in,{' '}
+            <b>{compact(state.generateLength)}</b> out
           </>
         ) : (
           <>
@@ -65,6 +69,7 @@ export interface SettingsProps {
   readonly onChange: (next: AppState) => void
   readonly topology: Topology
   readonly modelSlot: React.ReactNode
+  readonly onReset: () => void
 }
 
 export function Settings({
@@ -74,6 +79,7 @@ export function Settings({
   onChange,
   topology,
   modelSlot,
+  onReset,
 }: SettingsProps) {
   const ref = useRef<HTMLDialogElement>(null)
 
@@ -135,17 +141,10 @@ export function Settings({
           <select
             id="topology"
             value={state.topologyId}
-            onChange={(e) => {
-              const next = e.target.value
-              const gpus = next === 'h100-x1' ? 1 : 8
-              onChange({
-                ...state,
-                topologyId: next,
-                tensorParallel: Math.min(state.tensorParallel, gpus),
-                pipelineParallel: 1,
-                dataParallel: 1,
-              })
-            }}
+            // Routed through the same normaliser the URL uses, so a split is
+            // valid for the hardware by construction rather than by two copies
+            // of the clamping rule agreeing with each other.
+            onChange={(e) => onChange(normalise({ ...state, topologyId: e.target.value }))}
           >
             <option value="h100-x1">1 × H100 SXM5</option>
             <option value="h100-x8">8 × H100 SXM5 (NVSwitch)</option>
@@ -225,53 +224,223 @@ export function Settings({
                 <option value="int4">INT4 weight-only</option>
               </select>
             </div>
-            <div className="field">
-              <label className="label" htmlFor="kd">
-                KV cache
-              </label>
-              <select
-                id="kd"
-                value={state.kvDtype}
-                onChange={(e) => set('kvDtype', e.target.value as AppState['kvDtype'])}
-              >
-                <option value="bf16">BF16</option>
-                <option value="fp8">FP8</option>
-                <option value="int8">INT8</option>
-              </select>
-            </div>
+            {/* Inference only. Training has no KV cache to keep, so a control
+                for its precision changed nothing at all. */}
             {state.phase === 'inference' && (
               <div className="field">
-                <label className="label" htmlFor="split">
-                  Sharding
+                <label className="label" htmlFor="kd">
+                  KV cache
                 </label>
                 <select
-                  id="split"
-                  value={currentSplit}
-                  onChange={(e) => {
-                    const [tensor, pipeline, data] = e.target.value.split('-').map(Number)
-                    onChange({
-                      ...state,
-                      tensorParallel: tensor!,
-                      pipelineParallel: pipeline!,
-                      dataParallel: data!,
-                    })
-                  }}
+                  id="kd"
+                  value={state.kvDtype}
+                  onChange={(e) => set('kvDtype', e.target.value as AppState['kvDtype'])}
                 >
-                  {splits.map((s) => (
-                    <option
-                      key={`${s.tensor}-${s.pipeline}-${s.data}`}
-                      value={`${s.tensor}-${s.pipeline}-${s.data}`}
-                    >
-                      TP {s.tensor} · PP {s.pipeline} · DP {s.data}
-                    </option>
-                  ))}
+                  <option value="bf16">BF16</option>
+                  <option value="fp8">FP8</option>
+                  <option value="int8">INT8</option>
                 </select>
               </div>
             )}
+            <div className="field">
+              <label className="label" htmlFor="split">
+                Sharding
+              </label>
+              <select
+                id="split"
+                value={currentSplit}
+                onChange={(e) => {
+                  const [tensor, pipeline, data] = e.target.value.split('-').map(Number)
+                  onChange({
+                    ...state,
+                    tensorParallel: tensor!,
+                    pipelineParallel: pipeline!,
+                    dataParallel: data!,
+                  })
+                }}
+              >
+                {splits.map((s) => (
+                  <option
+                    key={`${s.tensor}-${s.pipeline}-${s.data}`}
+                    value={`${s.tensor}-${s.pipeline}-${s.data}`}
+                  >
+                    TP {s.tensor} · PP {s.pipeline} · DP {s.data}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
         </details>
+
+        {/* Every one of these changed a reported number while having no control
+            anywhere in the interface, which made the answer depend on state the
+            user could neither see nor set. The training block was the worst of
+            it: ZeRO stage and recomputation decide whether a run fits at all. */}
+        {state.phase === 'training' && (
+          <details className="disclosure" style={{ boxShadow: 'none' }}>
+            <summary>
+              <span className="title">Optimizer and memory</span>
+              <span className="preview">
+                ZeRO-{state.zeroStage} · {state.recompute} recompute
+              </span>
+            </summary>
+            <div className="body">
+              <div className="field">
+                <label className="label" htmlFor="opt">
+                  Optimizer
+                </label>
+                <select
+                  id="opt"
+                  value={state.optimizer}
+                  onChange={(e) => set('optimizer', e.target.value as AppState['optimizer'])}
+                >
+                  {/* Bytes of OPTIMIZER STATE per parameter, matching
+                      OPTIMIZER_BYTES exactly. The earlier numbers were neither
+                      the state nor the total, and two of them were simply
+                      wrong. */}
+                  <option value="adam-mixed">Adam, mixed precision — 12 bytes of state</option>
+                  <option value="adam-fp32-grads">
+                    Adam, FP32 gradients — 12 bytes of state, 4-byte grads
+                  </option>
+                  <option value="adam-8bit">Adam, 8-bit states — 6 bytes of state</option>
+                  <option value="sgd-momentum">SGD with momentum — 4 bytes of state</option>
+                </select>
+              </div>
+              <div className="field">
+                <label className="label" htmlFor="zero">
+                  ZeRO stage
+                </label>
+                <select
+                  id="zero"
+                  value={state.zeroStage}
+                  onChange={(e) =>
+                    set('zeroStage', Number(e.target.value) as AppState['zeroStage'])
+                  }
+                >
+                  <option value={0}>0 — replicate everything</option>
+                  <option value={1}>1 — shard optimizer states</option>
+                  <option value={2}>2 — shard gradients too</option>
+                  <option value={3}>3 — shard parameters too</option>
+                </select>
+                {/* ZeRO shards along the data-parallel dimension, so at DP 1
+                    there is nothing to shard and the setting is inert. Leaving
+                    that unsaid makes a control that changes no number look
+                    broken. */}
+                {state.dataParallel === 1 && (
+                  <p className="small muted" style={{ margin: '0.375rem 0 0' }}>
+                    Shards across data-parallel ranks. At DP 1 there is nothing to shard, so this
+                    changes nothing until you reshard.
+                  </p>
+                )}
+              </div>
+              <div className="field">
+                <label className="label" htmlFor="recompute">
+                  Activation recomputation
+                </label>
+                <select
+                  id="recompute"
+                  value={state.recompute}
+                  onChange={(e) => set('recompute', e.target.value as AppState['recompute'])}
+                >
+                  <option value="none">None — store every activation</option>
+                  <option value="selective">Selective — recompute attention only</option>
+                  <option value="full">Full — recompute every layer</option>
+                </select>
+              </div>
+              <Toggle
+                id="sp"
+                label="Sequence parallelism"
+                {...(state.tensorParallel === 1
+                  ? { hint: 'Shards what tensor parallelism leaves replicated. At TP 1 there is nothing to shard.' }
+                  : { hint: 'Shards the layer norms and dropouts that tensor parallelism replicates.' })}
+                checked={state.sequenceParallel}
+                onChange={(v) => set('sequenceParallel', v)}
+              />
+            </div>
+          </details>
+        )}
+
+        {/* Inference only, all of it. The cost figure is a serving metric and
+            neither runtime switch is read by the training path — three controls
+            that moved nothing. */}
+        {state.phase === 'inference' && (
+          <details className="disclosure" style={{ boxShadow: 'none' }}>
+            <summary>
+              <span className="title">Runtime and cost</span>
+              <span className="preview">
+                ${state.gpuHourCost.toFixed(2)} per GPU-hour
+                {state.cudaGraph ? ' · CUDA graphs' : ''}
+              </span>
+            </summary>
+            <div className="body">
+              <NumberField
+                id="cost"
+                label="Cost per GPU-hour, in dollars"
+                value={state.gpuHourCost}
+                min={0}
+                max={100}
+                step={0.05}
+                onChange={(v) => set('gpuHourCost', v)}
+              />
+              <Toggle
+                id="cg"
+                label="CUDA graph capture"
+                hint="Removes most per-kernel launch cost."
+                checked={state.cudaGraph}
+                onChange={(v) => set('cudaGraph', v)}
+              />
+              <Toggle
+                id="fa"
+                label="FlashAttention"
+                hint="Keeps the attention matrix off HBM."
+                checked={state.flashAttention}
+                onChange={(v) => set('flashAttention', v)}
+              />
+            </div>
+          </details>
+        )}
+
+        <button
+          type="button"
+          className="ghost"
+          style={{ marginTop: '0.5rem' }}
+          onClick={onReset}
+        >
+          Reset everything
+        </button>
       </div>
     </dialog>
+  )
+}
+
+function Toggle({
+  id,
+  label,
+  hint,
+  checked,
+  onChange,
+}: {
+  id: string
+  label: string
+  hint?: string
+  checked: boolean
+  onChange: (value: boolean) => void
+}) {
+  return (
+    <div className="field">
+      <label className="toggle" htmlFor={id}>
+        <input
+          id={id}
+          type="checkbox"
+          checked={checked}
+          onChange={(e) => onChange(e.target.checked)}
+        />
+        <span>
+          {label}
+          {hint && <em className="small muted">{hint}</em>}
+        </span>
+      </label>
+    </div>
   )
 }
 
@@ -299,6 +468,8 @@ function NumberField({
   step?: number
   onChange: (value: number) => void
 }) {
+  const [draft, setDraft] = useState<string>()
+
   return (
     <div className="field">
       <label className="label" htmlFor={id}>
@@ -311,14 +482,23 @@ function NumberField({
         id={id}
         type="number"
         inputMode="numeric"
-        value={value}
+        // Held locally while being typed. Committing only in-range values to a
+        // strictly controlled input meant backspacing "32" produced "" -> 0,
+        // which failed `>= min`, so nothing was committed and the field snapped
+        // straight back to 32. The value could not be cleared and therefore
+        // could not be replaced by typing — only by selecting and overwriting.
+        value={draft ?? String(value)}
         min={min}
         max={max}
         step={step}
         onChange={(e) => {
+          setDraft(e.target.value)
           const next = Number(e.target.value)
-          if (Number.isFinite(next) && next >= min && next <= max) onChange(next)
+          if (e.target.value !== '' && Number.isFinite(next) && next >= min && next <= max) {
+            onChange(next)
+          }
         }}
+        onBlur={() => setDraft(undefined)}
       />
     </div>
   )

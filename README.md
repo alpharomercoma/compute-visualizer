@@ -59,6 +59,38 @@ properly by re-choosing the axes — but it assumes bandwidth-dominated communic
 systematically misplaces latency-bound points, which is a regime this tool exists to get
 right.)
 
+## What it can show that a calculator cannot
+
+Both of these fall out of building the model as a scheduler over a task DAG rather than as a
+sum of independent terms, and of it being a pure function cheap enough to run hundreds of
+times.
+
+**The step, as time.** One layer drawn on two lanes — GPU and interconnect — with every
+kernel and every collective at its real start and duration, and the critical path emphasised.
+An all-reduce is not "13% of the step" floating somewhere; it sits between the output
+projection and the MLP, and the gap it leaves on the GPU lane is visible. That is what makes
+"tensor parallelism serialises decode" something you can see rather than something you are
+told. Terms charged to the step but happening outside any one layer — pipeline hops, the
+bubble, the exposed gradient reduction — are named in the caption with their share, because
+the figure cannot draw them.
+
+**Where the answer changes.** The bottleneck class swept across a whole axis, with the region
+that does not fit hatched and every threshold bisected to the exact value. A single verdict is
+a fact about today's configuration; the strip is a fact about the hardware. The sentence it
+most often produces is the one no other tool in this space says:
+
+> Limited by memory bandwidth at every batch size that fits — the last one is 94. Moving along
+> this axis will not change the answer.
+
+The strip is also a control: click or drag it and the page re-diagnoses.
+
+**When nothing fits, it searches.** "Shard further, cut the batch, or quantize" is a list of
+the four things the tool could have checked for you. Instead it evaluates nearby
+configurations with the same analysis the page runs, ranked by how little they ask of you, and
+offers the ones that work with their memory cost. Where no configuration works — a 70B in
+mixed-precision Adam needs 16 bytes per parameter, which is 141 GiB on each of eight H100s
+however you shard it — it names the models that do.
+
 ## Some things it will tell you
 
 - **Decode plots as two points, not one.** Linear layers sit at `I ≈ 2b/w` and walk right as
@@ -110,6 +142,40 @@ Hopper whitepaper states fourth-generation NVLink over *third*-generation NVSwit
 
 After the fixes, the two independent derivations agree to within 0.5% on every quantity of
 the reference scenario. Full record in [`docs/MODEL.md`](docs/MODEL.md).
+
+### And how the review method had to change
+
+The maths gates worked. The interface gates did not, and the reason is worth recording:
+**both reviewers were asked to judge a rendered screen, so both reviewed a picture rather than
+a product.** They passed a build in which the only control that opened the settings — the one
+route to every input — was rendered inside the success branch. Pressing the app's own
+"Training" toggle made the default configuration infeasible, that branch unmounted, and the
+page became a title, a "this will not fit" card and a footer, with no control anywhere on it.
+The whole state lives in the URL, so reloading did not escape it either. Nobody had clicked
+anything.
+
+Reviewing transitions instead of frames — enumerate the reachable states, ask which have no
+exit, ask what each control does when the result is absent — found in one pass:
+
+- a plain `#hw=h100-x1` link carrying the default tensor parallelism of 8 onto a single GPU,
+  where the capacity model divided the weights by eight and reported that a 70B fits
+  comfortably. A confidently wrong answer from a URL, and worse than the dead end, because
+  nothing about it looks broken;
+- the step share divided by the wrong denominator: `schedule` covers one pipeline stage in
+  inference and one microbatch in training, so training announced "memory bandwidth is the
+  limit" beside a share of 5%, while the bar next to it normalised to its own sum;
+- the limiting class chosen by the largest single slice rather than the largest class, so
+  30% collectives plus 30% stage transfer lost to 40% compute;
+- sweep thresholds quoted as actionable targets while being whichever of forty log-spaced
+  samples happened to change first — out by 10% on the front page;
+- a number field that could not be cleared with backspace, because an empty string parses to
+  zero and zero failed the range check;
+- four controls that changed nothing in the phase they were shown in, and two state fields
+  serialized into the URL with no reader at all.
+
+The rule this leaves behind: **controls belong to the page frame, never to the result.** Any
+control rendered inside a conditional is a control that disappears exactly when something has
+gone wrong.
 
 ## Reference scenario
 

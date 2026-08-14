@@ -101,11 +101,15 @@ function Sharding({ state, onChange, baseConfig, worldSize }: AdvancedProps) {
                 dataParallel: candidate.data,
               })
             }
+            aria-current={isCurrent}
             style={{
               display: 'block',
               width: '100%',
               textAlign: 'left',
-              background: isCurrent ? 'rgba(255,255,255,0.06)' : 'transparent',
+              // A 6%-white wash marks the current row on a dark panel and is
+              // invisible on a white one. Light is the default theme, so the
+              // marker was missing exactly where most people would look for it.
+              background: isCurrent ? 'var(--panel-sunk)' : 'transparent',
               border: 0,
               borderLeft: `2px solid ${isCurrent ? 'var(--accent)' : 'transparent'}`,
               padding: '0.625rem 0.75rem',
@@ -215,14 +219,14 @@ function Calibrate({
 
       {fit ? (
         <>
-          <div className="section-head" style={{ marginTop: 12 }}>
+          <p className="label" style={{ marginTop: 12 }}>
             Fitted{' '}
             {calibrated ? (
               <span className="tag calibrated">in use</span>
             ) : (
-              <span className="tag prior">not applied</span>
+              <span className="tag">not applied</span>
             )}
-          </div>
+          </p>
           <dl className="rows">
             <Row label="Measurements" value={`${fit.measurements.length}`} />
             <Row label="Startup α" value={`${(fit.alpha * 1e6).toFixed(2)} µs`} />
@@ -243,7 +247,7 @@ function Calibrate({
               deserves the same scepticism.
             </p>
           )}
-          <div className="row" style={{ marginTop: 10 }}>
+          <div style={{ display: 'flex', gap: '0.5rem', marginTop: 10 }}>
             <button
               type="button"
               className="ghost"

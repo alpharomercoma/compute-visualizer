@@ -268,6 +268,31 @@ p:last-child {
   margin-top: 0.25rem;
 }
 
+/* The rescue list, shown only when nothing fits. Each row is a real target and
+   states what it costs you in memory, so choosing between them is a comparison
+   rather than a guess. */
+
+.rescues {
+  display: grid;
+  gap: 0.375rem;
+  margin-top: 0.75rem;
+}
+
+.rescue {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.25rem 1rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.5rem 0.875rem;
+}
+
+.rescue .num {
+  font-size: var(--t-label);
+}
+
 /* --- Figures --------------------------------------------------------------- */
 
 .figures {
@@ -449,6 +474,54 @@ button {
   color: var(--accent);
 }
 
+/* A section title and its own control on one line, wrapping rather than
+   colliding when the title needs the width. */
+.panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.625rem;
+  min-height: var(--tap);
+  padding: 0.5rem 0;
+  cursor: pointer;
+}
+
+.toggle input {
+  width: 1.125rem;
+  height: 1.125rem;
+  margin: 0.1875rem 0 0;
+  accent-color: var(--accent);
+  flex: none;
+}
+
+.toggle em {
+  display: block;
+  font-style: normal;
+}
+
+/* --- The sweep -------------------------------------------------------------
+ * A chart you can grab. The focus ring has to be visible against six different
+ * fills, so it sits outside the box rather than inside it.
+ */
+
+.sweep {
+  display: block;
+  border-radius: 4px;
+}
+
+.sweep:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 3px;
+}
+
 /* --- Rows ------------------------------------------------------------------ */
 
 .rows {
@@ -497,6 +570,24 @@ button {
   font-family: var(--sans);
   font-size: var(--t-chart);
   fill: var(--ink-2);
+}
+
+/*
+ * Text drawn ON a data fill, rather than on a surface.
+ *
+ * `fill: var(--panel)` looked right in dark mode, where the panel is near-black
+ * on a mid-tone block, and was 3.6:1 in light mode, where it is white on the
+ * same teal — the identical mistake that put white on the accent in the
+ * segmented buttons. A halo makes it independent of whatever colour is
+ * underneath: the glyph is ink, the outline is the surface, so it reads on any
+ * of the six class colours in either theme.
+ */
+.chart .on-fill {
+  fill: var(--ink);
+  stroke: var(--panel);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  paint-order: stroke fill;
 }
 
 .chart .grid {

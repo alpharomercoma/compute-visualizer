@@ -11,6 +11,8 @@
  * second set of materials.
  */
 
+import { useWidth } from './useWidth'
+
 export interface HardwareBoardProps {
   readonly gpus: number
   readonly accelerator: string
@@ -24,7 +26,12 @@ export interface HardwareBoardProps {
   readonly infeasible: boolean
 }
 
-export function HardwareBoard({
+export function HardwareBoard(props: HardwareBoardProps) {
+  const [ref, width] = useWidth<HTMLDivElement>()
+  return <div ref={ref}>{width > 0 && <Board {...props} width={width} />}</div>
+}
+
+function Board({
   gpus,
   accelerator,
   occupancy,
@@ -33,16 +40,26 @@ export function HardwareBoard({
   linkActivity,
   accent,
   infeasible,
-}: HardwareBoardProps) {
+  width,
+}: HardwareBoardProps & { width: number }) {
   const columns = gpus === 1 ? 1 : Math.ceil(gpus / 2)
   const rows = gpus === 1 ? 1 : 2
 
-  const tile = { w: 92, h: 62 }
   const gapX = 14
   const gapY = 44 // room for the switch spine between the rows
   const pad = { x: 8, y: 22 }
 
-  const width = pad.x * 2 + columns * tile.w + (columns - 1) * gapX
+  /**
+   * Tiles size to the width they are given, rather than the SVG scaling to fit
+   * fixed tiles. Fixed tiles meant a 850-unit viewBox squeezed into 358 pixels
+   * on a phone, which took the 11px labels down to 8.6 — legible on the desk it
+   * was designed at, and not on the device most people would open it on.
+   */
+  const tile = {
+    w: Math.max(52, (width - pad.x * 2 - (columns - 1) * gapX) / columns),
+    h: 62,
+  }
+
   const height = pad.y * 2 + rows * tile.h + (rows - 1) * gapY
 
   const x = (i: number) => pad.x + (i % columns) * (tile.w + gapX)
@@ -59,6 +76,8 @@ export function HardwareBoard({
       <svg
         className="chart"
         viewBox={`0 0 ${width} ${height}`}
+        width={width}
+        height={height}
         role="img"
         aria-label={`${gpus} ${accelerator}, each using ${usedBytesLabel} of ${totalBytesLabel} memory. Collectives take ${Math.round(
           linkActivity * 100,
@@ -128,14 +147,20 @@ export function HardwareBoard({
                 opacity={0.85}
               />
             )}
+            {/* Just the index once the tile is too narrow to carry both without
+                the two labels touching. The figcaption already says these are
+                GPUs, so the word is the part that can go. */}
             <text x={x(i) + 7} y={y(i) + 15} style={{ fill: 'var(--ink-2)' }}>
-              GPU {i}
+              {tile.w < 92 ? i : `GPU ${i}`}
             </text>
+            {/* Haloed: at high occupancy the memory bar grows up behind this
+                number, and ink on the accent is not a contrast anyone checked. */}
             <text
+              className="on-fill"
               x={x(i) + tile.w - 7}
               y={y(i) + 15}
               textAnchor="end"
-              style={{ fill: 'var(--ink)', fontFamily: 'var(--mono)' }}
+              style={{ fontFamily: 'var(--mono)' }}
             >
               {Math.round(clamped * 100)}%
             </text>

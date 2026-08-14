@@ -15,6 +15,7 @@
 
 import type { Roofline as RooflineModel, OperatingPoint } from '../core/roofline'
 import { attainable, decadeTicks, logPosition } from '../core/roofline'
+import { useWidth } from './useWidth'
 
 const CLASS_COLOR: Record<string, string> = {
   'qkv-projection': 'var(--c-compute)',
@@ -37,7 +38,18 @@ export interface RooflineProps {
   readonly height?: number
 }
 
-const PAD = { top: 18, right: 140, bottom: 40, left: 68 }
+/**
+ * Room for the axis labels, and for the point labels on the right.
+ *
+ * Narrow drops the label gutter entirely and moves identity to a legend below
+ * the plot. Keeping the 140px gutter on a 358px phone left 150px of actual
+ * chart, and the alternative — letting the viewBox scale — is what rendered
+ * this chart's 11px type at 3.9 effective pixels.
+ */
+const PADS = {
+  wide: { top: 18, right: 140, bottom: 40, left: 68 },
+  narrow: { top: 14, right: 16, bottom: 34, left: 50 },
+}
 
 /**
  * Nudges labels apart so they can all be read.
@@ -70,16 +82,28 @@ function placeLabels(
   return placed
 }
 
-export function Roofline({
+export function Roofline(props: RooflineProps) {
+  const [ref, width] = useWidth<HTMLDivElement>()
+  return (
+    <div ref={ref}>
+      {width > 0 && <Plot {...props} width={width} />}
+    </div>
+  )
+}
+
+/**
+ * One SVG unit is one CSS pixel, so the type is the size the stylesheet says.
+ */
+function Plot({
   model,
   points,
   asymptotes,
   showTheoretical,
-  height = 300,
-}: RooflineProps) {
-  // A wide viewBox keeps the rendered height near this figure at the widths this
-  // panel actually gets, so the chart does not grow to half the viewport.
-  const width = 940
+  width,
+}: RooflineProps & { width: number }) {
+  const narrow = width < 560
+  const PAD = narrow ? PADS.narrow : PADS.wide
+  const height = narrow ? 240 : 300
 
   const intensities = points.map((p) => p.arithmeticIntensity).filter((i) => i > 0 && isFinite(i))
   const xMin = 10 ** Math.floor(Math.log10(Math.min(0.5, ...intensities)))
@@ -106,11 +130,21 @@ export function Roofline({
   const formatFlops = (f: number) =>
     f >= 1e15 ? `${f / 1e15} PF` : f >= 1e12 ? `${f / 1e12} TF` : `${f / 1e9} GF`
 
+  const placed = placeLabels(
+    points.map((point) => ({
+      point,
+      x: px(point.arithmeticIntensity),
+      y: py(point.achieved),
+    })),
+  )
+
   return (
+    <>
     <svg
       className="chart"
       viewBox={`0 0 ${width} ${height}`}
-      style={{ maxHeight: 300 }}
+      width={width}
+      height={height}
       role="img"
       aria-label={`Roofline. Ridge point ${model.ridgePoint.toFixed(0)} FLOP per byte. ${points
         .map(
@@ -154,7 +188,12 @@ export function Roofline({
         stroke="var(--rule-strong)"
         strokeDasharray="2 4"
       />
-      <text x={px(model.ridgePoint) + 4} y={PAD.top + 9} fill="var(--ink-2)">
+      <text
+        x={px(model.ridgePoint) + (px(model.ridgePoint) > width - 80 ? -4 : 4)}
+        y={PAD.top + 9}
+        textAnchor={px(model.ridgePoint) > width - 80 ? 'end' : 'start'}
+        fill="var(--ink-2)"
+      >
         Ridge {model.ridgePoint.toFixed(0)}
       </text>
 
@@ -179,46 +218,60 @@ export function Roofline({
         </g>
       )}
 
-      {placeLabels(
-        points.map((point) => ({
-          point,
-          x: px(point.arithmeticIntensity),
-          y: py(point.achieved),
-        })),
-      ).map(({ point, x, y, labelY }) => {
+      {placed.map(({ point, x, y, labelY }) => {
         const color = CLASS_COLOR[point.kernelClass] ?? 'var(--ink-2)'
         if (!isFinite(x) || !isFinite(y)) return null
         return (
           <g key={point.label}>
             {/* Leader line, for labels nudged clear of a neighbour. */}
-            {Math.abs(labelY - y) > 2 && (
+            {!narrow && Math.abs(labelY - y) > 2 && (
               <line
                 x1={x + 5}
                 y1={y}
                 x2={x + 9}
                 y2={labelY - 3}
-                stroke="var(--rule-strong)"
+                stroke="var(--control-border)"
                 strokeWidth={1}
               />
             )}
-            {/* A surface ring keeps overlapping marks separable. */}
-            <circle cx={x} cy={y} r={5.5} fill="var(--surface)" />
+            {/* A surface ring keeps overlapping marks separable. The panel, not
+                the page: this chart sits inside a card. */}
+            <circle cx={x} cy={y} r={5.5} fill="var(--panel)" />
             <circle cx={x} cy={y} r={4} fill={color}>
               <title>
                 {point.label}: {point.arithmeticIntensity.toFixed(1)} FLOP/byte,{' '}
                 {point.memoryBound ? 'memory-bound' : 'compute-bound'}
               </title>
             </circle>
-            <text x={x + 10} y={labelY} fill="var(--ink-2)">
-              {point.label}
-            </text>
+            {!narrow && (
+              <text x={x + 10} y={labelY} fill="var(--ink-2)">
+                {point.label}
+              </text>
+            )}
           </g>
         )
       })}
 
-      <text x={PAD.left} y={height - 6}>
-        Arithmetic intensity — FLOP per byte of HBM traffic
+      <text x={PAD.left} y={height - 4}>
+        {narrow ? 'FLOP per byte' : 'Arithmetic intensity — FLOP per byte of HBM traffic'}
       </text>
     </svg>
+
+    {/* Identity moves to a legend where a right-hand gutter would cost more
+        chart than it is worth. Never colour alone, at either width. */}
+    {narrow && (
+      <div className="legend">
+        {points.map((point) => (
+          <span key={point.label}>
+            <i
+              style={{ background: CLASS_COLOR[point.kernelClass] ?? 'var(--ink-2)' }}
+              aria-hidden="true"
+            />
+            {point.label}
+          </span>
+        ))}
+      </div>
+    )}
+    </>
   )
 }
